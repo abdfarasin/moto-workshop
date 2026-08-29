@@ -1,6 +1,5 @@
 use rusqlite::{Connection, Result};
 
-const LATEST_SCHEMA_VERSION: i64 = 1;
 
 pub fn migrate_database(connection: &mut Connection) -> Result<()> {
     let current_version: i64 =
