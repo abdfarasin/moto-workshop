@@ -9,6 +9,10 @@ pub struct NewCustomer {
 pub enum CustomerValidationError {
     BlankName,
     BlankPhone,
+    NameTooLong,
+    NameContainsControlCharacter,
+    InvalidPhone,
+    NotesTooLong,
 }
 
 impl NewCustomer {
@@ -18,15 +22,21 @@ impl NewCustomer {
         notes: Option<String>,
     ) -> Result<Self, CustomerValidationError> {
         let name = name.trim().to_string();
-        let phone = normalize_phone(&phone);
 
         if name.is_empty() {
             return Err(CustomerValidationError::BlankName);
         }
 
-        if phone.is_empty() {
-            return Err(CustomerValidationError::BlankPhone);
+        if name.chars().count() > 100 {
+            return Err(CustomerValidationError::NameTooLong);
         }
+
+        if name.chars().any(char::is_control) {
+            return Err(CustomerValidationError::NameContainsControlCharacter);
+        }
+
+        let phone = normalize_phone(&phone)?;
+        let notes = normalize_notes(notes)?;
 
         Ok(Self { name, phone, notes })
     }
@@ -44,16 +54,42 @@ impl NewCustomer {
     }
 }
 
-fn normalize_phone(phone: &str) -> String {
+fn normalize_phone(phone: &str) -> Result<String, CustomerValidationError> {
     let phone = phone.trim();
 
-    if let Some(number) = phone.strip_prefix("00962") {
-        return format!("+962{number}");
+    if phone.is_empty() {
+        return Err(CustomerValidationError::BlankPhone);
     }
 
-    if let Some(local_number) = phone.strip_prefix('0') {
-        return format!("+962{local_number}");
+    let subscriber = [
+        phone.strip_prefix("+962"),
+        phone.strip_prefix("00962"),
+        phone.strip_prefix('0'),
+    ]
+    .into_iter()
+    .flatten()
+    .find(|subscriber| {
+        subscriber.len() == 9 && subscriber.bytes().all(|byte| byte.is_ascii_digit())
+    })
+    .ok_or(CustomerValidationError::InvalidPhone)?;
+
+    Ok(format!("+962{subscriber}"))
+}
+
+fn normalize_notes(notes: Option<String>) -> Result<Option<String>, CustomerValidationError> {
+    let Some(notes) = notes else {
+        return Ok(None);
+    };
+
+    let notes = notes.trim();
+
+    if notes.is_empty() {
+        return Ok(None);
     }
 
-    phone.to_string()
+    if notes.chars().count() > 2_000 {
+        return Err(CustomerValidationError::NotesTooLong);
+    }
+
+    Ok(Some(notes.to_string()))
 }
