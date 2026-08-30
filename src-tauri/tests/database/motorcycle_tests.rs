@@ -89,6 +89,103 @@ fn motorcycle_accepts_plate_only_vin_only_and_combined_identity() {
 }
 
 #[test]
+fn motorcycle_database_accepts_every_supported_identity_combination() {
+    // # Arrange
+    let cases = [
+        ("plate only", true, false, false, true),
+        ("VIN only", false, true, false, true),
+        ("chassis only", false, false, true, true),
+        ("plate and VIN", true, true, false, true),
+        ("plate and chassis", true, false, true, true),
+        ("VIN and chassis", false, true, true, true),
+        ("all three", true, true, true, true),
+        ("none", false, false, false, false),
+    ];
+
+    for (case, has_plate, has_vin, has_chassis, should_succeed) in cases {
+        let fixture = fixture();
+        let mut motorcycle = fixture.valid_plate_motorcycle();
+        if !has_plate {
+            motorcycle.plate_code_id = None;
+            motorcycle.plate_number = None;
+        }
+        motorcycle.vin = has_vin.then(|| VIN_ONE.to_string());
+        motorcycle.chassis_number = has_chassis.then(|| "FRAME/ABC-123.4".to_string());
+
+        // # Act
+        let result = insert_motorcycle(&fixture.connection, &motorcycle);
+
+        // # Assert
+        assert_eq!(result.is_ok(), should_succeed, "identity case: {case}");
+    }
+}
+
+#[test]
+fn motorcycle_database_enforces_canonical_chassis_number_rules() {
+    // # Arrange
+    let fixture = fixture();
+    let invalid_chassis_numbers = [
+        "".to_string(),
+        "abc123".to_string(),
+        "ABC 123".to_string(),
+        "ABC_123".to_string(),
+        "ABC@123".to_string(),
+        "هيكل123".to_string(),
+        "A".repeat(65),
+    ];
+
+    for chassis_number in invalid_chassis_numbers {
+        let mut motorcycle = fixture.valid_plate_motorcycle();
+        motorcycle.chassis_number = Some(chassis_number.clone());
+
+        // # Act
+        let result = insert_motorcycle(&fixture.connection, &motorcycle);
+
+        // # Assert
+        assert!(
+            result.is_err(),
+            "chassis should be rejected: {chassis_number:?}"
+        );
+    }
+
+    let mut maximum = fixture.valid_plate_motorcycle();
+    maximum.chassis_number = Some("A".repeat(64));
+
+    // # Act
+    let maximum_result = insert_motorcycle(&fixture.connection, &maximum);
+
+    // # Assert
+    assert!(maximum_result.is_ok());
+}
+
+#[test]
+fn motorcycle_chassis_number_is_unique_and_multiple_nulls_are_allowed() {
+    // # Arrange
+    let fixture = fixture();
+    let mut first = fixture.valid_plate_motorcycle();
+    first.chassis_number = Some("FRAME/12345".to_string());
+    insert_motorcycle(&fixture.connection, &first).expect("first chassis should be inserted");
+
+    let mut duplicate = first.clone();
+    duplicate.plate_number = Some(12346);
+
+    let mut first_null = fixture.valid_plate_motorcycle();
+    first_null.plate_number = Some(12347);
+    let mut second_null = first_null.clone();
+    second_null.plate_number = Some(12348);
+
+    // # Act
+    let duplicate_result = insert_motorcycle(&fixture.connection, &duplicate);
+    let first_null_result = insert_motorcycle(&fixture.connection, &first_null);
+    let second_null_result = insert_motorcycle(&fixture.connection, &second_null);
+
+    // # Assert
+    assert!(duplicate_result.is_err());
+    assert!(first_null_result.is_ok());
+    assert!(second_null_result.is_ok());
+}
+
+#[test]
 fn motorcycle_rejects_missing_or_half_present_plate_identity() {
     // # Arrange
     let fixture = fixture();
@@ -459,6 +556,7 @@ impl Fixture {
             plate_code_id: Some(self.plate_code_id),
             plate_number: Some(12345),
             vin: None,
+            chassis_number: None,
             color_id: self.color_id,
             notes: None,
             archived_at: None,
@@ -475,6 +573,7 @@ struct MotorcycleRecord {
     plate_code_id: Option<i64>,
     plate_number: Option<i64>,
     vin: Option<String>,
+    chassis_number: Option<String>,
     color_id: i64,
     notes: Option<String>,
     archived_at: Option<i64>,
@@ -545,13 +644,14 @@ fn insert_motorcycle(
             plate_code_id,
             plate_number,
             vin,
+            chassis_number,
             color_id,
             notes,
             created_at,
             updated_at,
             archived_at
         )
-        VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)
+        VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)
         ",
         params![
             motorcycle.customer_id,
@@ -561,6 +661,7 @@ fn insert_motorcycle(
             motorcycle.plate_code_id,
             motorcycle.plate_number,
             motorcycle.vin,
+            motorcycle.chassis_number,
             motorcycle.color_id,
             motorcycle.notes,
             1_000_i64,

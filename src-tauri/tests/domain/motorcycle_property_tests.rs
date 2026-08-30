@@ -1,4 +1,4 @@
-use moto_workshop_lib::domain::motorcycle::{PlateNumber, Vin};
+use moto_workshop_lib::domain::motorcycle::{ChassisNumber, PlateNumber, Vin};
 use proptest::prelude::*;
 
 proptest! {
@@ -52,6 +52,46 @@ proptest! {
         if let Ok(vin) = first {
             let second = Vin::parse(vin.as_str()).expect("canonical VIN should remain valid");
             prop_assert_eq!(second, vin);
+        }
+    }
+
+    #[test]
+    fn arbitrary_chassis_number_input_never_panics(input in any::<String>()) {
+        // # Act
+        let _ = ChassisNumber::parse(&input);
+    }
+
+    #[test]
+    fn successful_chassis_number_is_always_canonical(input in any::<String>()) {
+        // # Act
+        let result = ChassisNumber::parse(&input);
+
+        // # Assert
+        if let Ok(chassis) = result {
+            let value = chassis.as_str();
+            prop_assert!((1..=64).contains(&value.len()));
+            prop_assert!(value.is_ascii());
+            let has_valid_characters = value.bytes().all(|byte| {
+                byte.is_ascii_uppercase()
+                    || byte.is_ascii_digit()
+                    || matches!(byte, b'-' | b'/' | b'.')
+            });
+            prop_assert!(has_valid_characters);
+        }
+    }
+
+    #[test]
+    fn chassis_number_normalization_is_idempotent_for_arbitrary_valid_input(
+        input in any::<String>()
+    ) {
+        // # Act
+        let first = ChassisNumber::parse(&input);
+
+        // # Assert
+        if let Ok(chassis) = first {
+            let second = ChassisNumber::parse(chassis.as_str())
+                .expect("canonical chassis should remain valid");
+            prop_assert_eq!(second, chassis);
         }
     }
 }

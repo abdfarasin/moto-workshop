@@ -2,11 +2,12 @@ use std::{error::Error, fmt};
 
 use rusqlite::{Connection, OptionalExtension, Result};
 
-const MAX_SUPPORTED_SCHEMA_VERSION: i64 = 3;
+const MAX_SUPPORTED_SCHEMA_VERSION: i64 = 4;
 
 #[derive(Debug)]
 pub enum MigrationError {
     Database(rusqlite::Error),
+    ForeignKeyIntegrityViolation { table: String },
     InvalidExistingCustomer { customer_id: i64 },
     UnsupportedSchemaVersion { found: i64, max_supported: i64 },
 }
@@ -15,6 +16,12 @@ impl fmt::Display for MigrationError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Database(error) => write!(formatter, "database migration failed: {error}"),
+            Self::ForeignKeyIntegrityViolation { table } => {
+                write!(
+                    formatter,
+                    "foreign-key integrity violation in table {table}"
+                )
+            }
             Self::InvalidExistingCustomer { customer_id } => write!(
                 formatter,
                 "customer {customer_id} violates schema version 3 data requirements"
@@ -34,7 +41,9 @@ impl Error for MigrationError {
     fn source(&self) -> Option<&(dyn Error + 'static)> {
         match self {
             Self::Database(error) => Some(error),
-            Self::InvalidExistingCustomer { .. } | Self::UnsupportedSchemaVersion { .. } => None,
+            Self::ForeignKeyIntegrityViolation { .. }
+            | Self::InvalidExistingCustomer { .. }
+            | Self::UnsupportedSchemaVersion { .. } => None,
         }
     }
 }
@@ -65,6 +74,10 @@ pub fn migrate_database(connection: &mut Connection) -> std::result::Result<(), 
 
     if schema_version(connection)? < 3 {
         migrate_to_version_3(connection)?;
+    }
+
+    if schema_version(connection)? < 4 {
+        migrate_to_version_4(connection)?;
     }
 
     Ok(())
@@ -323,6 +336,146 @@ fn migrate_to_version_3(connection: &mut Connection) -> std::result::Result<(), 
     }
 
     transaction.pragma_update(None, "user_version", 3)?;
+
+    transaction.commit()?;
+
+    Ok(())
+}
+
+fn migrate_to_version_4(connection: &mut Connection) -> std::result::Result<(), MigrationError> {
+    let transaction = connection.transaction()?;
+
+    transaction.execute_batch(
+        "
+        CREATE TABLE motorcycles_v4 (
+            id             INTEGER PRIMARY KEY AUTOINCREMENT,
+            customer_id    INTEGER NOT NULL,
+            make_id        INTEGER NOT NULL,
+            model          TEXT NOT NULL
+                           CHECK (
+                               typeof(model) = 'text'
+                               AND model = trim(model)
+                               AND length(model) BETWEEN 1 AND 80
+                           ),
+            year           INTEGER
+                           CHECK (
+                               year IS NULL
+                               OR (typeof(year) = 'integer' AND year >= 1885)
+                           ),
+            plate_code_id  INTEGER,
+            plate_number   INTEGER
+                           CHECK (
+                               plate_number IS NULL
+                               OR (
+                                   typeof(plate_number) = 'integer'
+                                   AND plate_number BETWEEN 1 AND 99999
+                               )
+                           ),
+            vin            TEXT UNIQUE
+                           CHECK (
+                               vin IS NULL
+                               OR (
+                                   typeof(vin) = 'text'
+                                   AND length(vin) = 17
+                                   AND vin = upper(vin)
+                                   AND vin NOT GLOB '*[^A-Z0-9]*'
+                                   AND instr(vin, 'I') = 0
+                                   AND instr(vin, 'O') = 0
+                                   AND instr(vin, 'Q') = 0
+                               )
+                           ),
+            chassis_number TEXT UNIQUE
+                           CHECK (
+                               chassis_number IS NULL
+                               OR (
+                                   typeof(chassis_number) = 'text'
+                                   AND length(chassis_number) BETWEEN 1 AND 64
+                                   AND chassis_number = upper(chassis_number)
+                                   AND chassis_number NOT GLOB '*[^A-Z0-9./-]*'
+                               )
+                           ),
+            color_id       INTEGER NOT NULL,
+            notes          TEXT
+                           CHECK (
+                               notes IS NULL
+                               OR (typeof(notes) = 'text' AND length(notes) <= 2000)
+                           ),
+            created_at     INTEGER NOT NULL,
+            updated_at     INTEGER NOT NULL,
+            archived_at    INTEGER,
+            FOREIGN KEY (customer_id) REFERENCES customers(id) ON DELETE RESTRICT,
+            FOREIGN KEY (make_id) REFERENCES motorcycle_makes(id) ON DELETE RESTRICT,
+            FOREIGN KEY (plate_code_id) REFERENCES jordan_plate_codes(id) ON DELETE RESTRICT,
+            FOREIGN KEY (color_id) REFERENCES motorcycle_colors(id) ON DELETE RESTRICT,
+            CHECK (
+                (plate_code_id IS NULL AND plate_number IS NULL)
+                OR (plate_code_id IS NOT NULL AND plate_number IS NOT NULL)
+            ),
+            CHECK (
+                vin IS NOT NULL
+                OR chassis_number IS NOT NULL
+                OR plate_code_id IS NOT NULL
+            ),
+            UNIQUE (plate_code_id, plate_number)
+        );
+
+        INSERT INTO motorcycles_v4 (
+            id,
+            customer_id,
+            make_id,
+            model,
+            year,
+            plate_code_id,
+            plate_number,
+            vin,
+            chassis_number,
+            color_id,
+            notes,
+            created_at,
+            updated_at,
+            archived_at
+        )
+        SELECT
+            id,
+            customer_id,
+            make_id,
+            model,
+            year,
+            plate_code_id,
+            plate_number,
+            vin,
+            NULL,
+            color_id,
+            notes,
+            created_at,
+            updated_at,
+            archived_at
+        FROM motorcycles;
+
+        DROP TABLE motorcycles;
+        ALTER TABLE motorcycles_v4 RENAME TO motorcycles;
+
+        CREATE INDEX idx_motorcycles_customer_id
+            ON motorcycles(customer_id);
+
+        CREATE INDEX idx_motorcycles_make_id
+            ON motorcycles(make_id);
+        ",
+    )?;
+
+    let foreign_key_violation = transaction
+        .query_row(
+            "SELECT \"table\" FROM pragma_foreign_key_check LIMIT 1",
+            [],
+            |row| row.get(0),
+        )
+        .optional()?;
+
+    if let Some(table) = foreign_key_violation {
+        return Err(MigrationError::ForeignKeyIntegrityViolation { table });
+    }
+
+    transaction.pragma_update(None, "user_version", 4)?;
 
     transaction.commit()?;
 

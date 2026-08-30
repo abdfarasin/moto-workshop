@@ -79,6 +79,49 @@ impl Vin {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ChassisNumber(String);
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ChassisNumberValidationError {
+    Blank,
+    InvalidLength,
+    InvalidCharacter,
+}
+
+impl ChassisNumber {
+    pub fn parse(input: &str) -> Result<Self, ChassisNumberValidationError> {
+        let input = input.trim();
+
+        if input.is_empty() {
+            return Err(ChassisNumberValidationError::Blank);
+        }
+
+        if !input.is_ascii() {
+            return Err(ChassisNumberValidationError::InvalidCharacter);
+        }
+
+        if input.len() > 64 {
+            return Err(ChassisNumberValidationError::InvalidLength);
+        }
+
+        let normalized = input.to_ascii_uppercase();
+        let valid = normalized.bytes().all(|byte| {
+            byte.is_ascii_uppercase() || byte.is_ascii_digit() || matches!(byte, b'-' | b'/' | b'.')
+        });
+
+        if !valid {
+            return Err(ChassisNumberValidationError::InvalidCharacter);
+        }
+
+        Ok(Self(normalized))
+    }
+
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
 #[derive(Debug, PartialEq, Eq)]
 pub struct NewMotorcycleInput {
     pub make_id: i64,
@@ -87,6 +130,7 @@ pub struct NewMotorcycleInput {
     pub plate_code_id: Option<i64>,
     pub plate_number: Option<String>,
     pub vin: Option<String>,
+    pub chassis_number: Option<String>,
     pub color_id: i64,
     pub notes: Option<String>,
 }
@@ -114,6 +158,7 @@ pub struct NewMotorcycle {
     year: Option<i32>,
     plate: Option<JordanPlate>,
     vin: Option<Vin>,
+    chassis_number: Option<ChassisNumber>,
     color_id: i64,
     notes: Option<String>,
 }
@@ -127,6 +172,7 @@ pub enum MotorcycleValidationError {
     IncompletePlate,
     InvalidPlateNumber(PlateNumberValidationError),
     InvalidVin(VinValidationError),
+    InvalidChassisNumber(ChassisNumberValidationError),
     MissingIdentity,
     NotesTooLong,
 }
@@ -143,6 +189,7 @@ impl NewMotorcycle {
             plate_code_id,
             plate_number,
             vin,
+            chassis_number,
             color_id,
             notes,
         } = input;
@@ -176,7 +223,14 @@ impl NewMotorcycle {
             .map(|vin| Vin::parse(&vin).map_err(MotorcycleValidationError::InvalidVin))
             .transpose()?;
 
-        if plate.is_none() && vin.is_none() {
+        let chassis_number = normalize_optional_text(chassis_number)
+            .map(|chassis_number| {
+                ChassisNumber::parse(&chassis_number)
+                    .map_err(MotorcycleValidationError::InvalidChassisNumber)
+            })
+            .transpose()?;
+
+        if plate.is_none() && vin.is_none() && chassis_number.is_none() {
             return Err(MotorcycleValidationError::MissingIdentity);
         }
 
@@ -194,6 +248,7 @@ impl NewMotorcycle {
             year,
             plate,
             vin,
+            chassis_number,
             color_id,
             notes,
         })
@@ -217,6 +272,10 @@ impl NewMotorcycle {
 
     pub fn vin(&self) -> Option<&Vin> {
         self.vin.as_ref()
+    }
+
+    pub fn chassis_number(&self) -> Option<&ChassisNumber> {
+        self.chassis_number.as_ref()
     }
 
     pub fn color_id(&self) -> i64 {

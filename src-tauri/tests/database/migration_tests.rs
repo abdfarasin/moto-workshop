@@ -19,7 +19,7 @@ fn fresh_database_migrates_to_latest_schema_version() {
     migrate_database(&mut connection).expect("database migrations should succeed");
 
     // # Assert
-    assert_eq!(current_schema_version(&connection), 3);
+    assert_eq!(current_schema_version(&connection), 4);
     assert!(table_exists(&connection, "customers"));
     assert!(table_exists(&connection, "motorcycle_makes"));
     assert!(table_exists(&connection, "motorcycle_colors"));
@@ -41,7 +41,7 @@ fn migrating_an_already_migrated_database_is_safe() {
     migrate_database(&mut connection).expect("second migration should also succeed");
 
     // # Assert
-    assert_eq!(current_schema_version(&connection), 3);
+    assert_eq!(current_schema_version(&connection), 4);
     assert!(table_exists(&connection, "customers"));
     assert!(table_exists(&connection, "motorcycle_makes"));
     assert!(table_exists(&connection, "motorcycle_colors"));
@@ -93,7 +93,7 @@ fn version_one_database_upgrades_to_latest_version() {
     migrate_database(&mut connection).expect("version-one database should upgrade");
 
     // # Assert
-    assert_eq!(current_schema_version(&connection), 3);
+    assert_eq!(current_schema_version(&connection), 4);
     assert!(table_exists(&connection, "motorcycle_makes"));
     assert!(table_exists(&connection, "motorcycle_colors"));
     assert!(table_exists(&connection, "jordan_plate_codes"));
@@ -106,7 +106,7 @@ fn version_one_database_upgrades_to_latest_version() {
 }
 
 #[test]
-fn version_two_database_upgrades_to_version_three_and_preserves_customer_and_motorcycle() {
+fn version_two_database_upgrades_to_latest_and_preserves_customer_and_motorcycle() {
     // # Arrange
     let temp_dir = tempdir().expect("temporary directory should be created");
     let database_path = temp_dir.path().join("test.db");
@@ -154,7 +154,7 @@ fn version_two_database_upgrades_to_version_three_and_preserves_customer_and_mot
     migrate_database(&mut connection).expect("version-two database should upgrade");
 
     // # Assert
-    assert_eq!(current_schema_version(&connection), 3);
+    assert_eq!(current_schema_version(&connection), 4);
     let customer: (String, String, Option<String>) = connection
         .query_row(
             "SELECT name, phone, notes FROM customers WHERE id = ?1",
@@ -199,7 +199,179 @@ fn migration_two_stamps_version_two_before_migration_three_runs() {
 }
 
 #[test]
-fn version_three_migration_is_a_no_op_when_rerun() {
+fn migration_three_stamps_version_three_before_migration_four_runs() {
+    // # Arrange
+    let temp_dir = tempdir().expect("temporary directory should be created");
+    let database_path = temp_dir.path().join("test.db");
+    let mut connection = open_database(&database_path).expect("database should open");
+
+    // # Act
+    stop_after_migration_three(&mut connection);
+
+    // # Assert
+    assert_eq!(current_schema_version(&connection), 3);
+    assert!(trigger_exists(&connection, INSERT_VALIDATION_TRIGGER));
+    assert!(trigger_exists(&connection, UPDATE_VALIDATION_TRIGGER));
+    assert!(!column_exists(&connection, "motorcycles", "chassis_number"));
+}
+
+#[test]
+fn version_three_database_upgrades_to_four_preserving_motorcycles_and_autoincrement() {
+    // # Arrange
+    let temp_dir = tempdir().expect("temporary directory should be created");
+    let database_path = temp_dir.path().join("test.db");
+    let mut connection = open_database(&database_path).expect("database should open");
+    stop_after_migration_three(&mut connection);
+
+    connection
+        .execute(
+            "INSERT INTO customers (name, phone, created_at, updated_at)
+             VALUES ('Ahmad', '+962791234567', 1000, 1000)",
+            [],
+        )
+        .expect("customer should be inserted");
+    let customer_id = connection.last_insert_rowid();
+    connection
+        .execute("INSERT INTO jordan_plate_codes (code) VALUES ('A')", [])
+        .expect("plate code should be inserted");
+    let plate_code_id = connection.last_insert_rowid();
+    let make_id: i64 = connection
+        .query_row(
+            "SELECT id FROM motorcycle_makes WHERE name = 'Honda'",
+            [],
+            |row| row.get(0),
+        )
+        .expect("seeded make should exist");
+    let color_id: i64 = connection
+        .query_row(
+            "SELECT id FROM motorcycle_colors WHERE name = 'Black'",
+            [],
+            |row| row.get(0),
+        )
+        .expect("seeded color should exist");
+    connection
+        .execute_batch(&format!(
+            "INSERT INTO motorcycles (
+                id, customer_id, make_id, model, year, plate_code_id, plate_number,
+                vin, color_id, notes, created_at, updated_at, archived_at
+             ) VALUES
+                (10, {customer_id}, {make_id}, 'Plate Model', 2001, {plate_code_id}, 101,
+                 NULL, {color_id}, 'Plate notes', 1100, 1200, NULL),
+                (20, {customer_id}, {make_id}, 'VIN Model', 2002, NULL, NULL,
+                 '1HGCM82633A004352', {color_id}, 'VIN notes', 2100, 2200, NULL),
+                (30, {customer_id}, {make_id}, 'Combined Model', 2003, {plate_code_id}, 303,
+                 'ABCDEFGHJKLMNPRST', {color_id}, NULL, 3100, 3200, NULL),
+                (40, {customer_id}, {make_id}, 'Archived Model', NULL, {plate_code_id}, 404,
+                 NULL, {color_id}, 'Archived notes', 4100, 4200, 4300);"
+        ))
+        .expect("representative version-three motorcycles should be inserted");
+    let before = motorcycle_snapshots(&connection, "NULL");
+
+    // # Act
+    migrate_database(&mut connection).expect("version-three database should upgrade");
+
+    // # Assert
+    assert_eq!(current_schema_version(&connection), 4);
+    assert!(column_exists(&connection, "motorcycles", "chassis_number"));
+    assert_eq!(motorcycle_snapshots(&connection, "chassis_number"), before);
+    assert!(before
+        .iter()
+        .all(|motorcycle| motorcycle.chassis_number.is_none()));
+    assert!(motorcycle_column_is_indexed(&connection, "customer_id"));
+    assert!(motorcycle_column_is_indexed(&connection, "make_id"));
+    let joined_count: i64 = connection
+        .query_row(
+            "SELECT COUNT(*)
+             FROM motorcycles m
+             JOIN customers c ON c.id = m.customer_id
+             JOIN motorcycle_makes mk ON mk.id = m.make_id
+             JOIN motorcycle_colors co ON co.id = m.color_id",
+            [],
+            |row| row.get(0),
+        )
+        .expect("preserved relationships should remain queryable");
+    assert_eq!(joined_count, 4);
+    assert!(connection
+        .execute("DELETE FROM customers WHERE id = ?1", [customer_id])
+        .is_err());
+
+    connection
+        .execute(
+            "INSERT INTO motorcycles (
+                customer_id, make_id, model, chassis_number, color_id, created_at, updated_at
+             ) VALUES (?1, ?2, 'New Model', 'FRAME/NEW-41', ?3, 5100, 5200)",
+            (customer_id, make_id, color_id),
+        )
+        .expect("post-migration chassis-only motorcycle should be inserted");
+    assert!(connection.last_insert_rowid() > 40);
+}
+
+#[test]
+fn failed_migration_four_rolls_back_to_the_original_motorcycles_table() {
+    // # Arrange
+    let temp_dir = tempdir().expect("temporary directory should be created");
+    let database_path = temp_dir.path().join("test.db");
+    let mut connection = open_database(&database_path).expect("database should open");
+    stop_after_migration_three(&mut connection);
+    connection
+        .execute(
+            "INSERT INTO customers (name, phone, created_at, updated_at)
+             VALUES ('Ahmad', '+962791234567', 1000, 1000)",
+            [],
+        )
+        .expect("customer should be inserted");
+    let customer_id = connection.last_insert_rowid();
+    let make_id: i64 = connection
+        .query_row(
+            "SELECT id FROM motorcycle_makes WHERE name = 'Honda'",
+            [],
+            |row| row.get(0),
+        )
+        .expect("seeded make should exist");
+    let color_id: i64 = connection
+        .query_row(
+            "SELECT id FROM motorcycle_colors WHERE name = 'Black'",
+            [],
+            |row| row.get(0),
+        )
+        .expect("seeded color should exist");
+    connection
+        .execute(
+            "INSERT INTO motorcycles (
+                customer_id, make_id, model, vin, color_id, created_at, updated_at
+             ) VALUES (?1, ?2, 'Legacy Model', '1HGCM82633A004352', ?3, 1000, 1000)",
+            (customer_id, make_id, color_id),
+        )
+        .expect("legacy motorcycle should be inserted");
+    let before = motorcycle_snapshots(&connection, "NULL");
+    connection
+        .execute_batch(
+            "DROP INDEX idx_motorcycles_make_id;
+             CREATE INDEX idx_motorcycles_make_id ON customers(name);",
+        )
+        .expect("late migration-four index blocker should be created");
+
+    // # Act
+    let result = migrate_database(&mut connection);
+
+    // # Assert
+    assert!(result.is_err());
+    assert_eq!(current_schema_version(&connection), 3);
+    assert!(!column_exists(&connection, "motorcycles", "chassis_number"));
+    assert_eq!(motorcycle_snapshots(&connection, "NULL"), before);
+    assert!(table_exists(&connection, "motorcycles"));
+    assert!(!schema_object_exists(&connection, "motorcycles_v4"));
+    assert!(motorcycle_column_is_indexed(&connection, "customer_id"));
+    connection
+        .execute_batch(
+            "DROP INDEX idx_motorcycles_make_id;
+             CREATE INDEX idx_motorcycles_make_id ON motorcycles(make_id);",
+        )
+        .expect("migration-four index blocker should be removed");
+}
+
+#[test]
+fn version_four_migration_is_a_no_op_when_rerun() {
     // # Arrange
     let temp_dir = tempdir().expect("temporary directory should be created");
     let database_path = temp_dir.path().join("test.db");
@@ -208,16 +380,16 @@ fn version_three_migration_is_a_no_op_when_rerun() {
     let schema_before = schema_objects(&connection);
 
     // # Act
-    migrate_database(&mut connection).expect("version-three rerun should succeed");
+    migrate_database(&mut connection).expect("version-four rerun should succeed");
 
     // # Assert
-    assert_eq!(current_schema_version(&connection), 3);
+    assert_eq!(current_schema_version(&connection), 4);
     assert_eq!(schema_objects(&connection), schema_before);
 }
 
 #[test]
 fn databases_newer_than_supported_are_rejected_without_modification() {
-    for future_version in [4_i64, 999_i64] {
+    for future_version in [5_i64, 999_i64] {
         // # Arrange
         let temp_dir = tempdir().expect("temporary directory should be created");
         let database_path = temp_dir.path().join(format!("future-{future_version}.db"));
@@ -241,7 +413,7 @@ fn databases_newer_than_supported_are_rejected_without_modification() {
             result,
             Err(MigrationError::UnsupportedSchemaVersion {
                 found,
-                max_supported: 3
+                max_supported: 4
             }) if found == future_version
         ));
         assert_eq!(current_schema_version(&connection), future_version);
@@ -409,6 +581,23 @@ fn stop_after_migration_two(connection: &mut rusqlite::Connection) {
         .expect("migration-three blocker should be removed");
 }
 
+fn stop_after_migration_three(connection: &mut rusqlite::Connection) {
+    connection
+        .execute_batch("CREATE VIEW motorcycles_v4 AS SELECT 1 AS migration_blocker;")
+        .expect("migration-four blocker should be created");
+
+    let result = migrate_database(connection);
+    assert!(
+        result.is_err(),
+        "the migration-four blocker should stop the migration runner"
+    );
+    assert_eq!(current_schema_version(connection), 3);
+
+    connection
+        .execute_batch("DROP VIEW motorcycles_v4;")
+        .expect("migration-four blocker should be removed");
+}
+
 fn create_validation_trigger_blocker(connection: &rusqlite::Connection, trigger_name: &str) {
     connection
         .execute_batch(&format!(
@@ -444,6 +633,28 @@ fn table_exists(connection: &rusqlite::Connection, table_name: &str) -> bool {
         .expect("table existence should be queryable")
 }
 
+fn column_exists(connection: &rusqlite::Connection, table_name: &str, column_name: &str) -> bool {
+    connection
+        .query_row(
+            "SELECT EXISTS (
+                SELECT 1 FROM pragma_table_info(?1) WHERE name = ?2
+             )",
+            (table_name, column_name),
+            |row| row.get(0),
+        )
+        .expect("column existence should be queryable")
+}
+
+fn schema_object_exists(connection: &rusqlite::Connection, object_name: &str) -> bool {
+    connection
+        .query_row(
+            "SELECT EXISTS (SELECT 1 FROM sqlite_master WHERE name = ?1)",
+            [object_name],
+            |row| row.get(0),
+        )
+        .expect("schema object existence should be queryable")
+}
+
 fn trigger_exists(connection: &rusqlite::Connection, trigger_name: &str) -> bool {
     connection
         .query_row(
@@ -471,4 +682,75 @@ fn schema_objects(connection: &rusqlite::Connection) -> Vec<(String, String, Str
         .expect("schema rows should be readable")
         .collect::<rusqlite::Result<Vec<_>>>()
         .expect("schema rows should be collected")
+}
+
+fn motorcycle_column_is_indexed(connection: &rusqlite::Connection, column: &str) -> bool {
+    connection
+        .query_row(
+            "SELECT EXISTS (
+                SELECT 1
+                FROM pragma_index_list('motorcycles') AS index_list
+                JOIN pragma_index_info(index_list.name) AS index_info ON TRUE
+                WHERE index_info.name = ?1
+             )",
+            [column],
+            |row| row.get(0),
+        )
+        .expect("motorcycle indexes should be queryable")
+}
+
+#[derive(Debug, PartialEq, Eq)]
+struct MotorcycleSnapshot {
+    id: i64,
+    customer_id: i64,
+    make_id: i64,
+    model: String,
+    year: Option<i64>,
+    plate_code_id: Option<i64>,
+    plate_number: Option<i64>,
+    vin: Option<String>,
+    chassis_number: Option<String>,
+    color_id: i64,
+    notes: Option<String>,
+    created_at: i64,
+    updated_at: i64,
+    archived_at: Option<i64>,
+}
+
+fn motorcycle_snapshots(
+    connection: &rusqlite::Connection,
+    chassis_expression: &str,
+) -> Vec<MotorcycleSnapshot> {
+    let mut statement = connection
+        .prepare(&format!(
+            "SELECT
+                id, customer_id, make_id, model, year, plate_code_id, plate_number,
+                vin, {chassis_expression}, color_id, notes, created_at, updated_at, archived_at
+             FROM motorcycles
+             ORDER BY id"
+        ))
+        .expect("motorcycle snapshots should be queryable");
+
+    statement
+        .query_map([], |row| {
+            Ok(MotorcycleSnapshot {
+                id: row.get(0)?,
+                customer_id: row.get(1)?,
+                make_id: row.get(2)?,
+                model: row.get(3)?,
+                year: row.get(4)?,
+                plate_code_id: row.get(5)?,
+                plate_number: row.get(6)?,
+                vin: row.get(7)?,
+                chassis_number: row.get(8)?,
+                color_id: row.get(9)?,
+                notes: row.get(10)?,
+                created_at: row.get(11)?,
+                updated_at: row.get(12)?,
+                archived_at: row.get(13)?,
+            })
+        })
+        .expect("motorcycle snapshot rows should be readable")
+        .collect::<rusqlite::Result<Vec<_>>>()
+        .expect("motorcycle snapshots should be collected")
 }

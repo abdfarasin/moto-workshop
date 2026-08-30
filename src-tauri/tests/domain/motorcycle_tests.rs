@@ -1,6 +1,6 @@
 use moto_workshop_lib::domain::motorcycle::{
-    MotorcycleValidationError, NewMotorcycle, NewMotorcycleInput, PlateNumber,
-    PlateNumberValidationError, Vin, VinValidationError,
+    ChassisNumber, ChassisNumberValidationError, MotorcycleValidationError, NewMotorcycle,
+    NewMotorcycleInput, PlateNumber, PlateNumberValidationError, Vin, VinValidationError,
 };
 
 const CURRENT_YEAR: i32 = 2026;
@@ -97,6 +97,86 @@ fn vin_normalization_is_idempotent() {
 
     // # Assert
     assert_eq!(renormalized, vin);
+}
+
+#[test]
+fn chassis_number_normalizes_and_accepts_supported_values() {
+    // # Arrange
+    let cases = [
+        ("  abc123  ", "ABC123"),
+        ("JH2-RC46-123456", "JH2-RC46-123456"),
+        ("FRAME/12345", "FRAME/12345"),
+        ("QJ.2024.77881", "QJ.2024.77881"),
+        ("A", "A"),
+    ];
+
+    for (input, expected) in cases {
+        // # Act
+        let chassis = ChassisNumber::parse(input).expect("chassis number should be valid");
+
+        // # Assert
+        assert_eq!(chassis.as_str(), expected, "input: {input:?}");
+    }
+
+    // # Arrange
+    let maximum = "A".repeat(64);
+
+    // # Act
+    let chassis = ChassisNumber::parse(&maximum).expect("64 characters should be valid");
+
+    // # Assert
+    assert_eq!(chassis.as_str(), maximum);
+}
+
+#[test]
+fn chassis_number_rejects_invalid_values() {
+    // # Arrange
+    let cases = [
+        ("".to_string(), ChassisNumberValidationError::Blank),
+        ("   ".to_string(), ChassisNumberValidationError::Blank),
+        ("A".repeat(65), ChassisNumberValidationError::InvalidLength),
+        (
+            "ABC 123".to_string(),
+            ChassisNumberValidationError::InvalidCharacter,
+        ),
+        (
+            "ABC_123".to_string(),
+            ChassisNumberValidationError::InvalidCharacter,
+        ),
+        (
+            "ABC@123".to_string(),
+            ChassisNumberValidationError::InvalidCharacter,
+        ),
+        (
+            "هيكل123".to_string(),
+            ChassisNumberValidationError::InvalidCharacter,
+        ),
+        (
+            "ABC\u{0000}123".to_string(),
+            ChassisNumberValidationError::InvalidCharacter,
+        ),
+    ];
+
+    for (input, expected_error) in cases {
+        // # Act
+        let result = ChassisNumber::parse(&input);
+
+        // # Assert
+        assert_eq!(result, Err(expected_error), "input: {input:?}");
+    }
+}
+
+#[test]
+fn chassis_number_normalization_is_idempotent() {
+    // # Arrange
+    let chassis = ChassisNumber::parse(" frame/abc-123.4 ").expect("chassis should be valid");
+
+    // # Act
+    let renormalized =
+        ChassisNumber::parse(chassis.as_str()).expect("canonical chassis should remain valid");
+
+    // # Assert
+    assert_eq!(renormalized, chassis);
 }
 
 #[test]
@@ -239,6 +319,87 @@ fn new_motorcycle_accepts_vin_only_and_combined_identity() {
 }
 
 #[test]
+fn new_motorcycle_accepts_chassis_only_and_all_identity_sources() {
+    // # Arrange
+    let mut chassis_only_input = valid_input();
+    chassis_only_input.plate_code_id = None;
+    chassis_only_input.plate_number = None;
+    chassis_only_input.vin = None;
+    chassis_only_input.chassis_number = Some("  frame/abc-123.4  ".to_string());
+
+    // # Act
+    let chassis_only = NewMotorcycle::new(chassis_only_input, CURRENT_YEAR)
+        .expect("chassis-only identity should be valid");
+
+    // # Assert
+    assert_eq!(chassis_only.plate(), None);
+    assert_eq!(chassis_only.vin(), None);
+    assert_eq!(
+        chassis_only.chassis_number().map(ChassisNumber::as_str),
+        Some("FRAME/ABC-123.4")
+    );
+
+    // # Arrange
+    let mut all_identifiers_input = valid_input();
+    all_identifiers_input.vin = Some("1HGCM82633A004352".to_string());
+    all_identifiers_input.chassis_number = Some("ABC123456".to_string());
+
+    // # Act
+    let all_identifiers = NewMotorcycle::new(all_identifiers_input, CURRENT_YEAR)
+        .expect("all identity sources should coexist");
+
+    // # Assert
+    assert!(all_identifiers.plate().is_some());
+    assert!(all_identifiers.vin().is_some());
+    assert!(all_identifiers.chassis_number().is_some());
+}
+
+#[test]
+fn new_motorcycle_normalizes_blank_chassis_to_absence() {
+    // # Arrange
+    let mut plate_identity = valid_input();
+    plate_identity.chassis_number = Some("   ".to_string());
+
+    // # Act
+    let motorcycle = NewMotorcycle::new(plate_identity, CURRENT_YEAR)
+        .expect("blank optional chassis should normalize to absence");
+
+    // # Assert
+    assert_eq!(motorcycle.chassis_number(), None);
+
+    // # Arrange
+    let mut missing_identity = valid_input();
+    missing_identity.plate_code_id = None;
+    missing_identity.plate_number = None;
+    missing_identity.vin = None;
+    missing_identity.chassis_number = Some("   ".to_string());
+
+    // # Act
+    let result = NewMotorcycle::new(missing_identity, CURRENT_YEAR);
+
+    // # Assert
+    assert_eq!(result, Err(MotorcycleValidationError::MissingIdentity));
+}
+
+#[test]
+fn new_motorcycle_reports_invalid_chassis_number() {
+    // # Arrange
+    let mut input = valid_input();
+    input.chassis_number = Some("ABC_123".to_string());
+
+    // # Act
+    let result = NewMotorcycle::new(input, CURRENT_YEAR);
+
+    // # Assert
+    assert_eq!(
+        result,
+        Err(MotorcycleValidationError::InvalidChassisNumber(
+            ChassisNumberValidationError::InvalidCharacter
+        ))
+    );
+}
+
+#[test]
 fn new_motorcycle_rejects_missing_or_incomplete_identity() {
     // # Arrange
     let cases = [
@@ -362,6 +523,7 @@ fn valid_input() -> NewMotorcycleInput {
         plate_code_id: Some(1),
         plate_number: Some("12345".to_string()),
         vin: None,
+        chassis_number: None,
         color_id: 1,
         notes: None,
     }
