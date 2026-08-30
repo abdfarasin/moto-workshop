@@ -71,3 +71,12 @@ Before declaring work complete:
 * no known regression has been introduced.
 
 Prefer simple code and explicit domain concepts over speculative abstractions.
+
+## Living documentation
+
+Keep these repository documents synchronized with every relevant change:
+
+* `DATABASE_SCHEMA.md` describes the latest supported SQLite schema, entities, constraints, triggers, indexes, and relationships. Update it whenever a migration, persisted entity, database invariant, or relationship changes.
+* `SOFTWARE_ARCHITECTURE.md` describes how the frontend, Tauri shell, Rust modules, domain model, persistence layer, and tests are connected. Update it whenever modules, responsibilities, data flow, commands, or architectural boundaries change.
+
+Do not declare a change complete while either document is stale relative to the working tree. Documentation-only wording changes that do not affect schema or architecture do not require circular documentation edits.

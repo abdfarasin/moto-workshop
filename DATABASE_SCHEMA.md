@@ -1,6 +1,6 @@
 # Database Schema
 
-This is the living reference for the latest supported SQLite schema. It reflects the current schema version 5 working tree and must be updated with every persistence change.
+This is the living reference for the latest supported SQLite schema. It reflects the current schema version 6 working tree and must be updated with every persistence change.
 
 ## Migration history
 
@@ -11,8 +11,9 @@ This is the living reference for the latest supported SQLite schema. It reflects
 | 3 | Add Customer INSERT/UPDATE validation triggers and validate legacy Customer rows. |
 | 4 | Rebuild `motorcycles` to add canonical chassis/frame identity support. |
 | 5 | Create `service_visits`, skeletal `invoices`, lifecycle/history triggers, and automatic draft invoices. |
+| 6 | Create reusable `inventory_units`, archivable `inventory_items`, and the immutable `stock_movements` ledger. |
 
-The migration runner rejects databases whose `PRAGMA user_version` is greater than 5. Historical migrations 1–4 are immutable.
+The migration runner rejects databases whose `PRAGMA user_version` is greater than 6. Historical migrations 1–5 are immutable.
 
 ## Entity relationships
 
@@ -25,6 +26,8 @@ erDiagram
     MOTORCYCLES ||--o{ SERVICE_VISITS : receives
     CUSTOMERS ||--o{ SERVICE_VISITS : owner_snapshot
     SERVICE_VISITS ||--|| INVOICES : creates
+    INVENTORY_UNITS ||--o{ INVENTORY_ITEMS : measures
+    INVENTORY_ITEMS ||--o{ STOCK_MOVEMENTS : ledger
 
     CUSTOMERS {
         INTEGER id PK
@@ -101,6 +104,36 @@ erDiagram
         TEXT notes NULL
         INTEGER created_at
         INTEGER updated_at
+    }
+
+    INVENTORY_UNITS {
+        INTEGER id PK
+        TEXT name UK
+        INTEGER quantity_scale
+        INTEGER active
+    }
+
+    INVENTORY_ITEMS {
+        INTEGER id PK
+        TEXT name
+        TEXT sku UK_NULL
+        INTEGER unit_id FK
+        INTEGER default_purchase_price_fils NULL
+        INTEGER default_selling_price_fils
+        INTEGER minimum_stock_quantity
+        TEXT notes NULL
+        INTEGER created_at
+        INTEGER updated_at
+        INTEGER archived_at NULL
+    }
+
+    STOCK_MOVEMENTS {
+        INTEGER id PK
+        INTEGER inventory_item_id FK
+        TEXT movement_type
+        INTEGER quantity_delta
+        TEXT notes NULL
+        INTEGER created_at
     }
 ```
 
@@ -220,6 +253,68 @@ OPEN -> READY_FOR_PICKUP -> CLOSED
 
 An `AFTER INSERT` Service Visit trigger creates exactly one draft Invoice atomically. Uniqueness prevents a second Invoice; focused triggers prevent changing `service_visit_id` or deleting the Invoice.
 
+## Inventory quantity and price representation
+
+Inventory quantities and money are stored only as SQLite `INTEGER` values. Each reusable Inventory Unit defines a `quantity_scale` of `1`, `10`, `100`, or `1000`, meaning that many stored subunits equal one displayed unit. For example, a Piece uses scale `1`; a Liter uses scale `1000`, so stored quantity `3750` means `3.750` liters.
+
+InventoryItem prices are integer fils per one displayed unit. Thus a selling price of `7000` on a Liter item means `7.000 JOD` per `1.000` liter. Prices and stored quantities are bounded at `1,000,000,000`; no SQLite REAL value is authoritative.
+
+## `inventory_units`
+
+| Column | SQLite declaration | Rules |
+| --- | --- | --- |
+| `id` | `INTEGER PRIMARY KEY AUTOINCREMENT` | Internal unit identity. |
+| `name` | `TEXT NOT NULL COLLATE NOCASE UNIQUE` | SQLite-trimmed canonical name, length 1–40; case-insensitive uniqueness. |
+| `quantity_scale` | `INTEGER NOT NULL` | Exactly `1`, `10`, `100`, or `1000`. |
+| `active` | `INTEGER NOT NULL DEFAULT 1` | Exactly `0` or `1`; deactivation is the lifecycle mechanism. |
+
+Migration 6 seeds only `Piece` with scale `1` and `Liter` with scale `1000`. Hard deletion is prohibited. Once an Inventory Unit is referenced by any Inventory Item, a focused trigger prevents changing its scale so historical quantities cannot be reinterpreted.
+
+## `inventory_items`
+
+| Column | SQLite declaration | Rules |
+| --- | --- | --- |
+| `id` | `INTEGER PRIMARY KEY AUTOINCREMENT` | Internal item identity. |
+| `name` | `TEXT NOT NULL` | SQLite-trimmed canonical text, length 1–150; deliberately not unique. |
+| `sku` | `TEXT NULL COLLATE NOCASE UNIQUE` | NULL or trimmed text, length 1–64; uniqueness includes archived items. |
+| `unit_id` | `INTEGER NOT NULL` | FK to `inventory_units(id)`, `ON DELETE RESTRICT`. |
+| `default_purchase_price_fils` | `INTEGER NULL` | NULL or integer `0..=1,000,000,000` fils per displayed unit. |
+| `default_selling_price_fils` | `INTEGER NOT NULL` | Integer `0..=1,000,000,000` fils per displayed unit. |
+| `minimum_stock_quantity` | `INTEGER NOT NULL DEFAULT 0` | Scaled integer warning threshold `0..=1,000,000,000`; never blocks outgoing stock. |
+| `notes` | `TEXT NULL` | NULL or trimmed text, length 1–2,000. |
+| `created_at` | `INTEGER NOT NULL` | Caller-supplied timestamp. |
+| `updated_at` | `INTEGER NOT NULL` | Caller-supplied timestamp. |
+| `archived_at` | `INTEGER NULL` | Optional archive timestamp; archived rows and SKUs remain historical. |
+
+There is no `current_quantity`, `stock`, `low_stock`, or fractional-quantity flag. The Unit scale is the single precision definition. An Item's Unit can be corrected before its first Stock Movement, but a focused trigger prevents changing it after any ledger history exists. Hard deletion is prohibited; archiving preserves history.
+
+## `stock_movements`
+
+| Column | SQLite declaration | Rules |
+| --- | --- | --- |
+| `id` | `INTEGER PRIMARY KEY AUTOINCREMENT` | Internal movement identity. |
+| `inventory_item_id` | `INTEGER NOT NULL` | FK to `inventory_items(id)`, `ON DELETE RESTRICT`. |
+| `movement_type` | `TEXT NOT NULL` | Exactly `OPENING_STOCK`, `PURCHASE`, `ADJUSTMENT_IN`, or `ADJUSTMENT_OUT`. |
+| `quantity_delta` | `INTEGER NOT NULL` | Incoming: `1..=1,000,000,000`; outgoing: `-1,000,000,000..=-1`. |
+| `notes` | `TEXT NULL` | NULL or trimmed text, length 1–2,000. |
+| `created_at` | `INTEGER NOT NULL` | Nonnegative caller-supplied timestamp. |
+
+Stock Movements are an immutable ledger: focused triggers reject every UPDATE and DELETE. Corrections use compensating movements, preserving both the mistaken entry and its correction. `idx_stock_movements_inventory_item_id` supports per-item aggregation.
+
+Authoritative current stock is always derived:
+
+```sql
+SELECT COALESCE(SUM(quantity_delta), 0)
+FROM stock_movements
+WHERE inventory_item_id = ?;
+```
+
+No movements means zero. Negative stock is intentionally valid and records operational reality; neither minimum stock nor the current aggregate blocks outgoing adjustments.
+
 ## Deferred schema
 
-There are currently no inventory items, stock movements, or structured parts-usage records. `ServiceVisitPart`, invoice issuance/numbering, payments, and financial snapshot totals remain deferred and must be added through later migrations rather than editing versions 1–5.
+Structured ServiceVisit parts usage remains deferred to schema v7. The next slice must make `ServiceVisitPart` link a ServiceVisit to an InventoryItem, store quantity using the Item's scaled Unit, snapshot the selling price, and calculate each line with integer arithmetic. Fractional line totals must round to the nearest fil with exact halves rounded upward, per line before Invoice summation.
+
+That future design must atomically create negative `SERVICE_USAGE` Stock Movements, correct them with `SERVICE_USAGE_REVERSAL`, retain historical part rows using ACTIVE/VOIDED semantics, allow `void_reason` to be optional, and prevent parts mutation after a ServiceVisit is CLOSED or CANCELLED. None of those tables, statuses, or movement types exist in schema v6.
+
+Invoice issuance/numbering, payments, financial snapshot totals, suppliers, purchasing workflows, stock valuation, taxes, and reporting also remain deferred and must be added through later migrations rather than editing versions 1–6.
