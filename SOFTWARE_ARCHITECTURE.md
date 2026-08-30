@@ -8,8 +8,12 @@ This is the living overview of how the application is connected. It reflects the
 flowchart LR
     UI[React + TypeScript UI] -->|Tauri invoke| SHELL[Tauri 2 shell]
     SHELL --> LIB[Rust library]
+    LIB --> APP[Service Visit workspace application service]
     LIB --> DOMAIN[Pure domain modules]
     LIB --> DB[SQLite infrastructure]
+    APP --> DOMAIN
+    APP --> REPOS[Focused rusqlite repositories]
+    REPOS --> SQLITE
     DB --> SQLITE[(SQLite database)]
 
     DOMAIN --> CUSTOMER[Customer validation]
@@ -23,6 +27,7 @@ flowchart LR
 
     DTESTS[Domain tests + proptest] --> DOMAIN
     DBTESTS[Temporary-DB integration tests] --> DB
+    APPTESTS[Temporary-DB application tests] --> APP
 ```
 
 ## Frontend
@@ -41,12 +46,14 @@ flowchart LR
 
 ## Rust library boundaries
 
-`src-tauri/src/lib.rs` exposes two top-level areas:
+`src-tauri/src/lib.rs` exposes three top-level areas and keeps repositories internal:
 
+- `application`: production use-case orchestration;
 - `domain`: pure business validation and typed value objects.
 - `db`: SQLite connection policy and ordered migrations.
+- `repositories`: focused rusqlite persistence adapters used by the application layer.
 
-There is not yet an application/use-case layer or repository abstraction. Domain objects do not depend on SQLite, Tauri, or the system clock.
+Domain objects do not depend on SQLite, Tauri, or the system clock. The application layer depends on domain behavior and concrete repository operations, while repositories contain SQL and row mapping but no workflow policy. No speculative generic repository abstraction exists.
 
 ## Domain modules
 
@@ -102,6 +109,24 @@ Stock Movement instances expose no mutation behavior. Persistence supplies the p
 
 ## Persistence
 
+### Service Visit workspace repositories
+
+`repositories/service_visit.rs` loads the complete Service Visit workspace header and historical Part rows, and owns the focused INSERT/UPDATE statements for work fields and Part mutations. `repositories/inventory.rs` loads selectable non-archived Inventory Items joined to active Unit metadata. Both remain persistence-focused and return owned rows; they do not calculate totals, normalize business input, or decide lifecycle policy.
+
+### Service Visit workspace application service
+
+`application/service_visit_workspace.rs` is the first production use-case layer. It:
+
+- loads a Service Visit with its owner snapshot, Motorcycle presentation data, and ACTIVE/VOIDED Part history;
+- validates mutable work-field updates through the existing ServiceVisit domain lifecycle;
+- lists usable Inventory Items with current Unit name, scale, and suggested selling price;
+- accepts only Item/Visit IDs, scaled quantity, charged price, and caller-supplied timestamps when adding a Part;
+- loads Item and Unit snapshot metadata inside the transaction, constructs the ServiceVisitPart domain object, and persists its authoritative integer line total;
+- voids ACTIVE parts through the existing domain normalization and chronology rules;
+- wraps every read-validate-write mutation in one SQLite transaction, while schema-v7 triggers atomically append usage or reversal movements.
+
+The service exposes typed not-found, lifecycle, domain-validation, and database errors. It has no Tauri or React dependency.
+
 ### Connection policy
 
 `db/connection.rs` opens SQLite with:
@@ -141,12 +166,13 @@ Migration 7 rebuilds `stock_movements` transactionally, preserves every v6 row a
 
 - `src-tauri/tests/domain/` tests pure domain behavior and uses `proptest` for input-safety properties.
 - `src-tauri/tests/database/` uses isolated temporary SQLite databases for connection, migration, catalog, Customer, Motorcycle, ServiceVisit, Invoice, Inventory, and stock-ledger integration behavior.
+- `src-tauri/tests/application/` uses isolated temporary SQLite databases to verify repository queries and complete Service Visit workspace use cases across the application/domain/schema boundaries.
 - Migration tests exercise the public migration runner and observable stopping points instead of private migration functions.
 - Frontend compilation is verified with `npm run build`; there are no feature-level frontend tests yet.
 
 ## Current end-to-end limitation
 
-The validated domain and SQLite foundation are not connected to the React UI. There are no repositories, application services, or Tauri commands for workshop data. ServiceVisit creation therefore has no production orchestration layer yet; the database trigger nevertheless guarantees a draft Invoice for every raw persisted visit. Inventory operations likewise have no production orchestration or UI yet. The only current runtime UI interaction is the template greeting command.
+The Service Visit workspace now has production repositories and application orchestration, but it is not connected to React because no workshop Tauri commands exist yet. ServiceVisit creation and lifecycle-transition commands also remain outside this slice. The only registered runtime command is still the template greeting command.
 
 ## Deferred Invoice integration
 
