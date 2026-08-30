@@ -40,6 +40,7 @@ flowchart LR
 
 - `src/main.tsx` mounts the React application.
 - `src/features/service/api/` owns the typed TypeScript contract and the fifteen `invoke` wrappers for Customer and Motorcycle creation, Motorcycle registration reference data, Customer/Motorcycle lookup, and Service Visit creation, workspace, Part, work-field, and lifecycle commands. It preserves known backend error categories and distinguishes non-contract transport failures.
+- `src/features/service/new-visit/` owns the self-contained production dialog for creating a Service Visit for an existing Customer and Motorcycle. The dialog uses only the typed feature API, loads recent/search results, blocks Motorcycles whose lookup projection reports an active Visit, validates basic form shape, and passes the returned workspace to its caller. It is intentionally not mounted in the application shell yet.
 - Current workshop screens still use frontend preview data and do not invoke the new backend commands yet.
 - No persistence logic is embedded in React components.
 
@@ -231,11 +232,11 @@ Migration 7 rebuilds `stock_movements` transactionally, preserves every v6 row a
 - `src-tauri/tests/application/` uses isolated temporary SQLite databases to verify Customer creation and canonical duplicate handling, active Motorcycle registration catalogs, transactional Motorcycle creation through authoritative domain rules and trusted backend year, Customer/Motorcycle lookup, authoritative-owner Service Visit creation, draft-Invoice effects, repository queries, and complete workspace use cases across the application/domain/schema boundaries.
 - Rust command integration tests exercise handlers against real temporary schema-v7 databases, including onboarding and lookup results, runtime migration, camelCase DTO mapping, lifecycle orchestration, stable status/error serialization, safe inputs, and sanitized duplicate/database failures.
 - Migration tests exercise the public migration runner and observable stopping points instead of private migration functions.
-- Frontend compilation is verified with `npm run build`; Vitest exercises the feature-local Service Visit API at the Tauri transport boundary.
+- Frontend compilation is verified with `npm run build`; Vitest exercises the feature-local Service Visit API at the Tauri transport boundary. React Testing Library with jsdom verifies the isolated new-Visit dialog through visible behavior while mocking only that typed API boundary.
 
 ## Current end-to-end limitation
 
-The Service Visit feature now has production Customer creation, Motorcycle registration and reference data, Customer/Motorcycle lookup, and application orchestration for Visit creation, work, Parts, and existing lifecycle transitions. Runtime database initialization, registered Tauri commands, and feature-local typed TypeScript invoke wrappers are present. Replacement of frontend preview data and React wiring remain deferred, so current screens do not call these boundaries yet.
+The Service Visit feature now has production Customer creation, Motorcycle registration and reference data, Customer/Motorcycle lookup, and application orchestration for Visit creation, work, Parts, and existing lifecycle transitions. Runtime database initialization, registered Tauri commands, feature-local typed TypeScript invoke wrappers, and an isolated existing-Customer/Motorcycle new-Visit dialog are present. Replacement of frontend preview data and application-shell/topbar wiring remain deferred, so current screens do not mount this dialog or call these boundaries yet.
 
 ## Deferred Invoice integration
 
