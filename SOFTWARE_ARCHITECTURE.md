@@ -6,8 +6,13 @@ This is the living overview of how the application is connected. It reflects the
 
 ```mermaid
 flowchart LR
-    UI[React + TypeScript UI] -->|Tauri invoke| SHELL[Tauri 2 shell]
-    SHELL --> LIB[Rust library]
+    UI[React + TypeScript UI] -.->|future invoke wrappers| COMMANDS[Tauri command DTO boundary]
+    SHELL[Tauri 2 shell] --> LIB[Rust library]
+    LIB --> COMMANDS
+    LIB --> RUNTIME[Runtime DB initialization + managed state]
+    COMMANDS --> APP
+    COMMANDS --> RUNTIME
+    RUNTIME --> DB
     LIB --> APP[Service Visit workspace application service]
     LIB --> DOMAIN[Pure domain modules]
     LIB --> DB[SQLite infrastructure]
@@ -33,25 +38,38 @@ flowchart LR
 ## Frontend
 
 - `src/main.tsx` mounts the React application.
-- `src/App.tsx` is still the default Tauri/Vite demonstration UI.
-- No Customer or Motorcycle production UI exists yet.
-- The frontend contains no persistence logic.
+- Current workshop screens still use frontend preview data and do not invoke the new backend commands yet.
+- No persistence logic is embedded in React components.
 
 ## Tauri shell
 
 - The application uses Tauri 2.
 - `src-tauri/src/main.rs` starts `moto_workshop_lib::run()`.
 - `src-tauri/src/lib.rs` configures the Tauri builder and opener plugin.
-- The only registered command is the template `greet` command. No workshop CRUD commands exist yet.
+- Startup resolves Tauri's application-data directory, creates it when needed, opens `moto-workshop.sqlite3` through the established connection policy, and runs the v1-v7 migration runner before the application launches.
+- The rusqlite connection is held in Tauri managed state behind a standard `Mutex`; each synchronous command locks it only for its application-service call.
+- Startup path resolution, directory creation, database opening, and migration errors abort startup with a clear failure rather than continuing with an invalid database.
+- The template `greet` command has been removed.
+- Exactly five Service Visit commands are registered: `load_service_visit_workspace`, `list_service_visit_inventory_items`, `update_service_visit_work`, `add_service_visit_part`, and `void_service_visit_part`.
+
+### Service Visit command boundary
+
+`commands/service_visit_workspace.rs` is a thin synchronous adapter. It contains no SQL or business validation. It maps explicit camelCase serde input/output DTOs to the existing application service and maps application failures to a stable `{ category, message }` command error.
+
+Service Visit statuses serialize exactly as `OPEN`, `READY_FOR_PICKUP`, `CLOSED`, and `CANCELLED`. Part statuses serialize as `ACTIVE` and `VOIDED`; neither contract depends on Rust Debug formatting. Error categories serialize in camelCase: `serviceVisitNotFound`, `inventoryItemNotFound`, `serviceVisitPartNotFound`, `lifecycleRejected`, `validationError`, and `databaseError`. Database messages deliberately omit raw SQL and SQLite details.
+
+The add-Part command accepts only Visit ID, Item ID, scaled quantity, charged unit price, and creation timestamp. Snapshot Item name, Unit name, quantity scale, and line total remain Rust/application responsibilities. Command inputs deny unknown fields, so caller-supplied database paths or forged snapshot fields are rejected during deserialization.
 
 ## Rust library boundaries
 
-`src-tauri/src/lib.rs` exposes three top-level areas and keeps repositories internal:
+`src-tauri/src/lib.rs` exposes five top-level areas and keeps repositories internal:
 
 - `application`: production use-case orchestration;
+- `commands`: serializable Tauri DTOs, handlers, and error mapping;
 - `domain`: pure business validation and typed value objects.
 - `db`: SQLite connection policy and ordered migrations.
 - `repositories`: focused rusqlite persistence adapters used by the application layer.
+- `runtime`: application-data path database initialization and managed connection state.
 
 Domain objects do not depend on SQLite, Tauri, or the system clock. The application layer depends on domain behavior and concrete repository operations, while repositories contain SQL and row mapping but no workflow policy. No speculative generic repository abstraction exists.
 
@@ -167,12 +185,13 @@ Migration 7 rebuilds `stock_movements` transactionally, preserves every v6 row a
 - `src-tauri/tests/domain/` tests pure domain behavior and uses `proptest` for input-safety properties.
 - `src-tauri/tests/database/` uses isolated temporary SQLite databases for connection, migration, catalog, Customer, Motorcycle, ServiceVisit, Invoice, Inventory, and stock-ledger integration behavior.
 - `src-tauri/tests/application/` uses isolated temporary SQLite databases to verify repository queries and complete Service Visit workspace use cases across the application/domain/schema boundaries.
+- `src-tauri/tests/command_tests.rs` exercises command handlers against real temporary schema-v7 databases, including runtime migration, camelCase DTO mapping, stable status/error serialization, safe add-Part input, and sanitized database failures.
 - Migration tests exercise the public migration runner and observable stopping points instead of private migration functions.
 - Frontend compilation is verified with `npm run build`; there are no feature-level frontend tests yet.
 
 ## Current end-to-end limitation
 
-The Service Visit workspace now has production repositories and application orchestration, but it is not connected to React because no workshop Tauri commands exist yet. ServiceVisit creation and lifecycle-transition commands also remain outside this slice. The only registered runtime command is still the template greeting command.
+The Service Visit workspace now has production repositories, application orchestration, runtime database initialization, and registered Tauri commands. React invoke wrappers and replacement of frontend preview data remain deferred, so current screens do not call this boundary yet. ServiceVisit creation and lifecycle-transition commands also remain outside this slice.
 
 ## Deferred Invoice integration
 

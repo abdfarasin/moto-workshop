@@ -1,18 +1,34 @@
 pub mod application;
+pub mod commands;
 pub mod db;
 pub mod domain;
 mod repositories;
-// Learn more about Tauri commands at https://tauri.app/develop/calling-rust/
-#[tauri::command]
-fn greet(name: &str) -> String {
-    format!("Hello, {}! You've been greeted from Rust!", name)
-}
+pub mod runtime;
+
+use commands::service_visit_workspace::{
+    add_service_visit_part, list_service_visit_inventory_items, load_service_visit_workspace,
+    update_service_visit_work, void_service_visit_part,
+};
+use runtime::database::RuntimeDatabase;
+use tauri::Manager;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
-        .invoke_handler(tauri::generate_handler![greet])
+        .setup(|application| {
+            let application_data_directory = application.path().app_data_dir()?;
+            let database = RuntimeDatabase::initialize(application_data_directory)?;
+            application.manage(database);
+            Ok(())
+        })
+        .invoke_handler(tauri::generate_handler![
+            load_service_visit_workspace,
+            list_service_visit_inventory_items,
+            update_service_visit_work,
+            add_service_visit_part,
+            void_service_visit_part,
+        ])
         .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .unwrap_or_else(|error| panic!("Moto Workshop startup failed: {error}"));
 }
