@@ -1,6 +1,6 @@
 # Database Schema
 
-This is the living reference for the latest supported SQLite schema. It reflects the current schema version 6 working tree and must be updated with every persistence change.
+This is the living reference for the latest supported SQLite schema. It reflects the current schema version 7 working tree and must be updated with every persistence change.
 
 ## Migration history
 
@@ -12,8 +12,9 @@ This is the living reference for the latest supported SQLite schema. It reflects
 | 4 | Rebuild `motorcycles` to add canonical chassis/frame identity support. |
 | 5 | Create `service_visits`, skeletal `invoices`, lifecycle/history triggers, and automatic draft invoices. |
 | 6 | Create reusable `inventory_units`, archivable `inventory_items`, and the immutable `stock_movements` ledger. |
+| 7 | Create historical `service_visit_parts`; rebuild Stock Movements for automatic usage and reversal entries. |
 
-The migration runner rejects databases whose `PRAGMA user_version` is greater than 6. Historical migrations 1–5 are immutable.
+The migration runner rejects databases whose `PRAGMA user_version` is greater than 7. Historical migrations 1–6 are immutable.
 
 ## Entity relationships
 
@@ -28,6 +29,9 @@ erDiagram
     SERVICE_VISITS ||--|| INVOICES : creates
     INVENTORY_UNITS ||--o{ INVENTORY_ITEMS : measures
     INVENTORY_ITEMS ||--o{ STOCK_MOVEMENTS : ledger
+    SERVICE_VISITS ||--o{ SERVICE_VISIT_PARTS : uses
+    INVENTORY_ITEMS ||--o{ SERVICE_VISIT_PARTS : snapshots
+    SERVICE_VISIT_PARTS ||--o{ STOCK_MOVEMENTS : effects
 
     CUSTOMERS {
         INTEGER id PK
@@ -130,9 +134,26 @@ erDiagram
     STOCK_MOVEMENTS {
         INTEGER id PK
         INTEGER inventory_item_id FK
+        INTEGER service_visit_part_id FK_NULL
         TEXT movement_type
         INTEGER quantity_delta
         TEXT notes NULL
+        INTEGER created_at
+    }
+
+    SERVICE_VISIT_PARTS {
+        INTEGER id PK
+        INTEGER service_visit_id FK
+        INTEGER inventory_item_id FK
+        TEXT item_name
+        TEXT unit_name
+        INTEGER quantity
+        INTEGER quantity_scale
+        INTEGER unit_price_fils
+        INTEGER line_total_fils
+        TEXT status
+        INTEGER voided_at NULL
+        TEXT void_reason NULL
         INTEGER created_at
     }
 ```
@@ -294,7 +315,8 @@ There is no `current_quantity`, `stock`, `low_stock`, or fractional-quantity fla
 | --- | --- | --- |
 | `id` | `INTEGER PRIMARY KEY AUTOINCREMENT` | Internal movement identity. |
 | `inventory_item_id` | `INTEGER NOT NULL` | FK to `inventory_items(id)`, `ON DELETE RESTRICT`. |
-| `movement_type` | `TEXT NOT NULL` | Exactly `OPENING_STOCK`, `PURCHASE`, `ADJUSTMENT_IN`, or `ADJUSTMENT_OUT`. |
+| `service_visit_part_id` | `INTEGER NULL` | NULL for manual movements; FK to `service_visit_parts(id)` for usage/reversal. |
+| `movement_type` | `TEXT NOT NULL` | Manual types plus `SERVICE_USAGE` and `SERVICE_USAGE_REVERSAL`. |
 | `quantity_delta` | `INTEGER NOT NULL` | Incoming: `1..=1,000,000,000`; outgoing: `-1,000,000,000..=-1`. |
 | `notes` | `TEXT NULL` | NULL or trimmed text, length 1–2,000. |
 | `created_at` | `INTEGER NOT NULL` | Nonnegative caller-supplied timestamp. |
@@ -311,10 +333,32 @@ WHERE inventory_item_id = ?;
 
 No movements means zero. Negative stock is intentionally valid and records operational reality; neither minimum stock nor the current aggregate blocks outgoing adjustments.
 
+## `service_visit_parts`
+
+A ServiceVisitPart is an immutable historical part/material line. It references its Service Visit and Inventory Item while snapshotting the Item name, Unit name, Unit scale, positive scaled quantity, charged unit price, and calculated line total. Catalog renames, Unit renames, archiving, and default-price changes never rewrite these snapshots.
+
+| Column | Rules |
+| --- | --- |
+| `service_visit_id` | Existing OPEN or READY_FOR_PICKUP Service Visit; CLOSED/CANCELLED reject add or void. |
+| `inventory_item_id` | Existing, non-archived Inventory Item. |
+| `item_name` | Must equal current Item name at insertion; trimmed length 1–150, then immutable. |
+| `unit_name` | Must equal current Unit name; trimmed length 1–40, then immutable. |
+| `quantity` | Integer `1..=1,000,000,000` stored subunits. |
+| `quantity_scale` | Exactly 1, 10, 100, or 1000 and must match the current Unit at insertion. |
+| `unit_price_fils` | Actual charged price per displayed Unit, integer `0..=1,000,000,000`; it may differ from the Item default. |
+| `line_total_fils` | Calculated snapshot using integer half-up rounding per line. |
+| `status` | `ACTIVE` or terminal `VOIDED`. New rows must be ACTIVE. |
+| `voided_at` | Required for VOIDED and not before `created_at`. |
+| `void_reason` | Optional; when present, canonical text length 1–1,000. |
+
+The single line-total formula in Rust and SQLite is `(quantity * unit_price_fils + quantity_scale / 2) / quantity_scale`. This rounds to the nearest fil with exact halves upward, per line. No floating-point arithmetic is used.
+
+Inserting a part atomically creates exactly one immutable `SERVICE_USAGE` movement for the same Item and part with `-quantity`. Voiding it atomically appends exactly one `SERVICE_USAGE_REVERSAL` with `+quantity`; the original usage remains. Partial unique indexes prevent duplicate usage or reversal. Direct linked movements must match their Part's Item, quantity, and status. Negative stock remains valid.
+
+Business snapshots cannot be edited in place or deleted. Correction is void-and-replace: ACTIVE becomes VOIDED with an optional reason, its reversal restores stock, and a replacement Part creates a new usage entry.
+
+Indexes support Service Visit parts display, Inventory Item usage history, and Item ledger aggregation.
+
 ## Deferred schema
 
-Structured ServiceVisit parts usage remains deferred to schema v7. The next slice must make `ServiceVisitPart` link a ServiceVisit to an InventoryItem, store quantity using the Item's scaled Unit, snapshot the selling price, and calculate each line with integer arithmetic. Fractional line totals must round to the nearest fil with exact halves rounded upward, per line before Invoice summation.
-
-That future design must atomically create negative `SERVICE_USAGE` Stock Movements, correct them with `SERVICE_USAGE_REVERSAL`, retain historical part rows using ACTIVE/VOIDED semantics, allow `void_reason` to be optional, and prevent parts mutation after a ServiceVisit is CLOSED or CANCELLED. None of those tables, statuses, or movement types exist in schema v6.
-
-Invoice issuance/numbering, payments, financial snapshot totals, suppliers, purchasing workflows, stock valuation, taxes, and reporting also remain deferred and must be added through later migrations rather than editing versions 1–6.
+Invoice totals/finalization, issuance/numbering, cancellation workflow, payments, discounts, taxes, suppliers, purchasing workflows, stock valuation, and reporting remain deferred. They must be added through later migrations rather than editing versions 1–7.

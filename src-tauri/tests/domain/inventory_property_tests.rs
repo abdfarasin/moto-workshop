@@ -8,7 +8,8 @@ proptest! {
     #[test]
     fn arbitrary_quantity_delta_never_panics(
         quantity_delta in any::<i64>(),
-        movement_index in 0_u8..4,
+        movement_index in 0_u8..6,
+        service_visit_part_id in proptest::option::of(any::<i64>()),
     ) {
         // # Arrange
         let movement_type = movement_type(movement_index);
@@ -16,6 +17,7 @@ proptest! {
         // # Act
         let result = StockMovement::new(NewStockMovementInput {
             inventory_item_id: 1,
+            service_visit_part_id,
             movement_type,
             quantity_delta,
             notes: None,
@@ -31,8 +33,23 @@ proptest! {
                 | StockMovementType::AdjustmentIn => {
                     prop_assert!((1..=1_000_000_000).contains(&delta));
                 }
-                StockMovementType::AdjustmentOut => {
+                StockMovementType::AdjustmentOut | StockMovementType::ServiceUsage => {
                     prop_assert!((-1_000_000_000..=-1).contains(&delta));
+                }
+                StockMovementType::ServiceUsageReversal => {
+                    prop_assert!((1..=1_000_000_000).contains(&delta));
+                }
+            }
+            match movement_type {
+                StockMovementType::OpeningStock
+                | StockMovementType::Purchase
+                | StockMovementType::AdjustmentIn
+                | StockMovementType::AdjustmentOut => {
+                    prop_assert_eq!(movement.service_visit_part_id(), None);
+                }
+                StockMovementType::ServiceUsage
+                | StockMovementType::ServiceUsageReversal => {
+                    prop_assert!(movement.service_visit_part_id().is_some_and(|id| id > 0));
                 }
             }
         }
@@ -96,6 +113,8 @@ fn movement_type(index: u8) -> StockMovementType {
         0 => StockMovementType::OpeningStock,
         1 => StockMovementType::Purchase,
         2 => StockMovementType::AdjustmentIn,
-        _ => StockMovementType::AdjustmentOut,
+        3 => StockMovementType::AdjustmentOut,
+        4 => StockMovementType::ServiceUsage,
+        _ => StockMovementType::ServiceUsageReversal,
     }
 }

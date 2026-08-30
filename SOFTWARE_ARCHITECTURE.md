@@ -1,6 +1,6 @@
 # Software Architecture
 
-This is the living overview of how the application is connected. It reflects the current schema version 6 working tree and must be updated whenever responsibilities or data flow change.
+This is the living overview of how the application is connected. It reflects the current schema version 7 working tree and must be updated whenever responsibilities or data flow change.
 
 ## Current shape
 
@@ -16,8 +16,9 @@ flowchart LR
     DOMAIN --> MOTORCYCLE[Motorcycle validation]
     DOMAIN --> VISIT[ServiceVisit lifecycle]
     DOMAIN --> INVENTORY[Inventory validation]
+    DOMAIN --> PARTS[ServiceVisitPart lifecycle + totals]
     DB --> CONNECTION[Connection policy]
-    DB --> MIGRATIONS[Schema migrations v1-v6]
+    DB --> MIGRATIONS[Schema migrations v1-v7]
     MIGRATIONS --> LEDGER[Immutable stock ledger]
 
     DTESTS[Domain tests + proptest] --> DOMAIN
@@ -88,11 +89,16 @@ The domain accepts an owner snapshot ID but cannot verify ownership itself. Migr
 - `QuantityScale` permits only 1, 10, 100, or 1000 integer subunits per displayed unit;
 - `InventoryUnit` normalizes reusable unit names;
 - `InventoryItem` validates names, optional case-preserved SKU input, unit identity, integer-fils default prices, scaled minimum stock, and notes;
-- `StockMovementType` contains only OpeningStock, Purchase, AdjustmentIn, and AdjustmentOut;
-- `StockMovement` validates exact integer ranges and movement signs without querying current stock;
+- `StockMovementType` includes the four manual types plus ServiceUsage and ServiceUsageReversal;
+- linked usage types require a positive ServiceVisitPart ID and exact sign while manual types require no Part reference;
+- `StockMovement` validates exact integer ranges and relationship shapes without querying current stock;
 - all timestamps are supplied by callers, and no type depends on SQLite, Tauri, React, floating point, or the system clock.
 
 Stock Movement instances expose no mutation behavior. Persistence supplies the permanent immutability boundary.
+
+### Service Visit Part
+
+`domain/service_visit_part.rs` owns immutable historical snapshots, ACTIVE-to-VOIDED lifecycle behavior, optional void-reason normalization, and the single checked integer line-total calculation. It accepts caller-supplied IDs, catalog snapshots, charged price, and timestamps but does not query persistence. SQLite verifies the snapshots against current catalog rows when inserting.
 
 ## Persistence
 
@@ -118,15 +124,18 @@ v0 -> v1 Customers
    -> v4 chassis-aware Motorcycle identity
    -> v5 ServiceVisit lifecycle integrity and skeletal Invoices
    -> v6 Inventory Units, Inventory Items, and immutable Stock Movements
+   -> v7 ServiceVisitPart snapshots and automatic usage/reversal movements
 ```
 
 The authoritative table-level detail is in `DATABASE_SCHEMA.md`.
 
 ### Inventory ledger
 
-Migration 6 stores no authoritative current-stock field. Current stock is derived for one Inventory Item as `COALESCE(SUM(stock_movements.quantity_delta), 0)`. Negative totals are intentionally allowed. Corrections append compensating movements; database triggers prevent changing or deleting ledger history.
+There is no authoritative current-stock field. Current stock is derived for one Inventory Item as `COALESCE(SUM(stock_movements.quantity_delta), 0)`. Negative totals are intentionally allowed. Corrections append compensating movements; database triggers prevent changing or deleting ledger history.
 
 Every quantity is an integer interpreted through the Item's reusable Unit scale. Prices are integer fils per displayed Unit. The database freezes a referenced Unit's scale and freezes an Item's Unit once its first movement exists, preventing historical reinterpretation.
+
+Migration 7 rebuilds `stock_movements` transactionally, preserves every v6 row and ID with a NULL Part reference, restores immutability and Item Unit-freeze behavior, and adds automatic linked usage/reversal entries. A part may be added or voided in OPEN or READY_FOR_PICKUP; CLOSED/CANCELLED preserve history but block mutation. Void-and-replace is the correction model.
 
 ## Test strategy
 
@@ -139,9 +148,9 @@ Every quantity is an integer interpreted through the Item's reusable Unit scale.
 
 The validated domain and SQLite foundation are not connected to the React UI. There are no repositories, application services, or Tauri commands for workshop data. ServiceVisit creation therefore has no production orchestration layer yet; the database trigger nevertheless guarantees a draft Invoice for every raw persisted visit. Inventory operations likewise have no production orchestration or UI yet. The only current runtime UI interaction is the template greeting command.
 
-## Deferred ServiceVisit parts integration
+## Deferred Invoice integration
 
-Schema v6 deliberately does not connect Inventory to Service Visits. The next schema slice must introduce ServiceVisitPart with scaled quantity, a selling-price snapshot, integer per-line calculation rounded to the nearest fil with exact halves upward, and atomic negative `SERVICE_USAGE` ledger entries. Corrections will use `SERVICE_USAGE_REVERSAL`; usage rows will remain historical through ACTIVE/VOIDED semantics with optional `void_reason`, and CLOSED/CANCELLED visits will reject parts mutation. These are documented requirements, not implemented behavior.
+ServiceVisitPart line totals are historical snapshots, but schema v7 does not calculate or persist Invoice totals and does not finalize, issue, number, cancel, print, or accept payments for Invoices. Those workflows require a later explicit slice.
 
 ## Documentation synchronization
 

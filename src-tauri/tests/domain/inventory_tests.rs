@@ -336,6 +336,46 @@ fn stock_movement_validates_identity_timestamp_and_notes() {
 }
 
 #[test]
+fn stock_usage_types_require_positive_part_reference_and_exact_sign() {
+    for (movement_type, delta) in [
+        (StockMovementType::ServiceUsage, -1),
+        (StockMovementType::ServiceUsage, -MAX),
+        (StockMovementType::ServiceUsageReversal, 1),
+        (StockMovementType::ServiceUsageReversal, MAX),
+    ] {
+        let mut input = valid_movement(movement_type, delta);
+        input.service_visit_part_id = Some(7);
+        let movement = StockMovement::new(input).expect("linked usage movement should be valid");
+        assert_eq!(movement.service_visit_part_id(), Some(7));
+    }
+    for (movement_type, delta) in [
+        (StockMovementType::ServiceUsage, 1),
+        (StockMovementType::ServiceUsageReversal, -1),
+    ] {
+        let mut input = valid_movement(movement_type, delta);
+        input.service_visit_part_id = Some(7);
+        assert_eq!(
+            StockMovement::new(input),
+            Err(InventoryValidationError::InvalidQuantityDelta { movement_type })
+        );
+    }
+    for reference in [None, Some(0), Some(-1)] {
+        let mut input = valid_movement(StockMovementType::ServiceUsage, -1);
+        input.service_visit_part_id = reference;
+        assert_eq!(
+            StockMovement::new(input),
+            Err(InventoryValidationError::InvalidServiceVisitPartReference)
+        );
+    }
+    let mut manual = valid_movement(StockMovementType::Purchase, 1);
+    manual.service_visit_part_id = Some(7);
+    assert_eq!(
+        StockMovement::new(manual),
+        Err(InventoryValidationError::InvalidServiceVisitPartReference)
+    );
+}
+
+#[test]
 fn successful_item_preserves_all_integer_financial_and_quantity_inputs() {
     // # Arrange
     let input = NewInventoryItemInput {
@@ -373,6 +413,7 @@ fn valid_item(name: &str) -> NewInventoryItemInput {
 fn valid_movement(movement_type: StockMovementType, quantity_delta: i64) -> NewStockMovementInput {
     NewStockMovementInput {
         inventory_item_id: 1,
+        service_visit_part_id: None,
         movement_type,
         quantity_delta,
         notes: None,

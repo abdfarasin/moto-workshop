@@ -2,7 +2,7 @@ use std::{error::Error, fmt};
 
 use rusqlite::{Connection, OptionalExtension, Result};
 
-const MAX_SUPPORTED_SCHEMA_VERSION: i64 = 6;
+const MAX_SUPPORTED_SCHEMA_VERSION: i64 = 7;
 
 #[derive(Debug)]
 pub enum MigrationError {
@@ -86,6 +86,10 @@ pub fn migrate_database(connection: &mut Connection) -> std::result::Result<(), 
 
     if schema_version(connection)? < 6 {
         migrate_to_version_6(connection)?;
+    }
+
+    if schema_version(connection)? < 7 {
+        migrate_to_version_7(connection)?;
     }
 
     Ok(())
@@ -901,4 +905,258 @@ fn migrate_to_version_6(connection: &mut Connection) -> Result<()> {
     transaction.pragma_update(None, "user_version", 6)?;
 
     transaction.commit()
+}
+
+fn migrate_to_version_7(connection: &mut Connection) -> std::result::Result<(), MigrationError> {
+    let transaction = connection.transaction()?;
+
+    transaction.execute_batch(
+        "
+        CREATE TABLE service_visit_parts (
+            id                INTEGER PRIMARY KEY AUTOINCREMENT,
+            service_visit_id  INTEGER NOT NULL,
+            inventory_item_id INTEGER NOT NULL,
+            item_name         TEXT NOT NULL,
+            unit_name         TEXT NOT NULL,
+            quantity          INTEGER NOT NULL,
+            quantity_scale    INTEGER NOT NULL,
+            unit_price_fils   INTEGER NOT NULL,
+            line_total_fils   INTEGER NOT NULL,
+            status            TEXT NOT NULL DEFAULT 'ACTIVE',
+            voided_at         INTEGER,
+            void_reason       TEXT,
+            created_at        INTEGER NOT NULL,
+            FOREIGN KEY (service_visit_id) REFERENCES service_visits(id) ON DELETE RESTRICT,
+            FOREIGN KEY (inventory_item_id) REFERENCES inventory_items(id) ON DELETE RESTRICT,
+            CHECK (typeof(service_visit_id) = 'integer'),
+            CHECK (typeof(inventory_item_id) = 'integer'),
+            CHECK (typeof(item_name) = 'text' AND item_name = trim(item_name) AND length(item_name) BETWEEN 1 AND 150),
+            CHECK (typeof(unit_name) = 'text' AND unit_name = trim(unit_name) AND length(unit_name) BETWEEN 1 AND 40),
+            CHECK (typeof(quantity) = 'integer' AND quantity BETWEEN 1 AND 1000000000),
+            CHECK (typeof(quantity_scale) = 'integer' AND quantity_scale IN (1, 10, 100, 1000)),
+            CHECK (typeof(unit_price_fils) = 'integer' AND unit_price_fils BETWEEN 0 AND 1000000000),
+            CHECK (
+                typeof(line_total_fils) = 'integer'
+                AND line_total_fils = ((quantity * unit_price_fils) + (quantity_scale / 2)) / quantity_scale
+            ),
+            CHECK (status IN ('ACTIVE', 'VOIDED')),
+            CHECK (
+                (status = 'ACTIVE' AND voided_at IS NULL AND void_reason IS NULL)
+                OR (
+                    status = 'VOIDED'
+                    AND typeof(voided_at) = 'integer'
+                    AND voided_at >= created_at
+                    AND (
+                        void_reason IS NULL
+                        OR (
+                            typeof(void_reason) = 'text'
+                            AND void_reason = trim(void_reason)
+                            AND length(void_reason) BETWEEN 1 AND 1000
+                        )
+                    )
+                )
+            ),
+            CHECK (typeof(created_at) = 'integer' AND created_at >= 0)
+        );
+
+        DROP TRIGGER protect_inventory_item_unit_with_history_v6;
+        DROP TRIGGER prevent_stock_movement_update_v6;
+        DROP TRIGGER prevent_stock_movement_delete_v6;
+        DROP INDEX idx_stock_movements_inventory_item_id;
+        ALTER TABLE stock_movements RENAME TO stock_movements_v6;
+
+        CREATE TABLE stock_movements (
+            id                    INTEGER PRIMARY KEY AUTOINCREMENT,
+            inventory_item_id     INTEGER NOT NULL,
+            service_visit_part_id INTEGER,
+            movement_type         TEXT NOT NULL,
+            quantity_delta        INTEGER NOT NULL,
+            notes                 TEXT,
+            created_at            INTEGER NOT NULL,
+            FOREIGN KEY (inventory_item_id) REFERENCES inventory_items(id) ON DELETE RESTRICT,
+            FOREIGN KEY (service_visit_part_id) REFERENCES service_visit_parts(id) ON DELETE RESTRICT,
+            CHECK (typeof(inventory_item_id) = 'integer'),
+            CHECK (service_visit_part_id IS NULL OR typeof(service_visit_part_id) = 'integer'),
+            CHECK (movement_type IN ('OPENING_STOCK', 'PURCHASE', 'ADJUSTMENT_IN', 'ADJUSTMENT_OUT', 'SERVICE_USAGE', 'SERVICE_USAGE_REVERSAL')),
+            CHECK (
+                (
+                    movement_type IN ('OPENING_STOCK', 'PURCHASE', 'ADJUSTMENT_IN')
+                    AND service_visit_part_id IS NULL
+                    AND typeof(quantity_delta) = 'integer'
+                    AND quantity_delta BETWEEN 1 AND 1000000000
+                )
+                OR (
+                    movement_type = 'ADJUSTMENT_OUT'
+                    AND service_visit_part_id IS NULL
+                    AND typeof(quantity_delta) = 'integer'
+                    AND quantity_delta BETWEEN -1000000000 AND -1
+                )
+                OR (
+                    movement_type = 'SERVICE_USAGE'
+                    AND service_visit_part_id IS NOT NULL
+                    AND typeof(quantity_delta) = 'integer'
+                    AND quantity_delta BETWEEN -1000000000 AND -1
+                )
+                OR (
+                    movement_type = 'SERVICE_USAGE_REVERSAL'
+                    AND service_visit_part_id IS NOT NULL
+                    AND typeof(quantity_delta) = 'integer'
+                    AND quantity_delta BETWEEN 1 AND 1000000000
+                )
+            ),
+            CHECK (notes IS NULL OR (typeof(notes) = 'text' AND notes = trim(notes) AND length(notes) BETWEEN 1 AND 2000)),
+            CHECK (typeof(created_at) = 'integer' AND created_at >= 0)
+        );
+
+        INSERT INTO stock_movements (
+            id, inventory_item_id, service_visit_part_id,
+            movement_type, quantity_delta, notes, created_at
+        )
+        SELECT id, inventory_item_id, NULL, movement_type, quantity_delta, notes, created_at
+        FROM stock_movements_v6;
+        DROP TABLE stock_movements_v6;
+
+        CREATE TRIGGER protect_inventory_item_unit_with_history_v7
+        BEFORE UPDATE OF unit_id ON inventory_items
+        WHEN OLD.unit_id IS NOT NEW.unit_id
+         AND EXISTS (SELECT 1 FROM stock_movements WHERE inventory_item_id = OLD.id)
+        BEGIN
+            SELECT RAISE(ABORT, 'inventory item unit cannot change after stock movement');
+        END;
+
+        CREATE TRIGGER validate_service_visit_part_insert_v7
+        BEFORE INSERT ON service_visit_parts
+        WHEN NEW.status != 'ACTIVE'
+          OR NEW.voided_at IS NOT NULL
+          OR NEW.void_reason IS NOT NULL
+          OR NOT EXISTS (
+            SELECT 1
+            FROM service_visits v
+            JOIN inventory_items i ON i.id = NEW.inventory_item_id
+            JOIN inventory_units u ON u.id = i.unit_id
+            WHERE v.id = NEW.service_visit_id
+              AND v.status IN ('OPEN', 'READY_FOR_PICKUP')
+              AND i.archived_at IS NULL
+              AND NEW.item_name = i.name
+              AND NEW.unit_name = u.name
+              AND NEW.quantity_scale = u.quantity_scale
+        )
+        BEGIN
+            SELECT RAISE(ABORT, 'invalid service visit part snapshot or source state');
+        END;
+
+        CREATE TRIGGER validate_service_visit_part_update_v7
+        BEFORE UPDATE ON service_visit_parts
+        WHEN OLD.status != 'ACTIVE'
+          OR NEW.status != 'VOIDED'
+          OR OLD.service_visit_id IS NOT NEW.service_visit_id
+          OR OLD.inventory_item_id IS NOT NEW.inventory_item_id
+          OR OLD.item_name IS NOT NEW.item_name
+          OR OLD.unit_name IS NOT NEW.unit_name
+          OR OLD.quantity IS NOT NEW.quantity
+          OR OLD.quantity_scale IS NOT NEW.quantity_scale
+          OR OLD.unit_price_fils IS NOT NEW.unit_price_fils
+          OR OLD.line_total_fils IS NOT NEW.line_total_fils
+          OR OLD.created_at IS NOT NEW.created_at
+          OR NOT EXISTS (
+              SELECT 1 FROM service_visits
+              WHERE id = OLD.service_visit_id
+                AND status IN ('OPEN', 'READY_FOR_PICKUP')
+          )
+        BEGIN
+            SELECT RAISE(ABORT, 'invalid service visit part update');
+        END;
+
+        CREATE TRIGGER prevent_service_visit_part_delete_v7
+        BEFORE DELETE ON service_visit_parts
+        BEGIN
+            SELECT RAISE(ABORT, 'service visit part cannot be deleted');
+        END;
+
+        CREATE TRIGGER validate_linked_stock_movement_v7
+        BEFORE INSERT ON stock_movements
+        WHEN NEW.movement_type IN ('SERVICE_USAGE', 'SERVICE_USAGE_REVERSAL')
+         AND NOT EXISTS (
+            SELECT 1 FROM service_visit_parts p
+            WHERE p.id = NEW.service_visit_part_id
+              AND p.inventory_item_id = NEW.inventory_item_id
+              AND (
+                  (NEW.movement_type = 'SERVICE_USAGE' AND NEW.quantity_delta = -p.quantity)
+                  OR (
+                      NEW.movement_type = 'SERVICE_USAGE_REVERSAL'
+                      AND p.status = 'VOIDED'
+                      AND NEW.quantity_delta = p.quantity
+                  )
+              )
+         )
+        BEGIN
+            SELECT RAISE(ABORT, 'stock movement does not match service visit part');
+        END;
+
+        CREATE TRIGGER create_service_usage_v7
+        AFTER INSERT ON service_visit_parts
+        BEGIN
+            INSERT INTO stock_movements (
+                inventory_item_id, service_visit_part_id, movement_type,
+                quantity_delta, notes, created_at
+            ) VALUES (
+                NEW.inventory_item_id, NEW.id, 'SERVICE_USAGE',
+                -NEW.quantity, NULL, NEW.created_at
+            );
+        END;
+
+        CREATE TRIGGER create_service_usage_reversal_v7
+        AFTER UPDATE OF status ON service_visit_parts
+        WHEN OLD.status = 'ACTIVE' AND NEW.status = 'VOIDED'
+        BEGIN
+            INSERT INTO stock_movements (
+                inventory_item_id, service_visit_part_id, movement_type,
+                quantity_delta, notes, created_at
+            ) VALUES (
+                NEW.inventory_item_id, NEW.id, 'SERVICE_USAGE_REVERSAL',
+                NEW.quantity, NULL, NEW.voided_at
+            );
+        END;
+
+        CREATE TRIGGER prevent_stock_movement_update_v7
+        BEFORE UPDATE ON stock_movements
+        BEGIN
+            SELECT RAISE(ABORT, 'stock movement cannot be updated');
+        END;
+
+        CREATE TRIGGER prevent_stock_movement_delete_v7
+        BEFORE DELETE ON stock_movements
+        BEGIN
+            SELECT RAISE(ABORT, 'stock movement cannot be deleted');
+        END;
+
+        CREATE UNIQUE INDEX one_service_usage_per_part_v7
+            ON stock_movements(service_visit_part_id)
+            WHERE movement_type = 'SERVICE_USAGE';
+        CREATE UNIQUE INDEX one_service_usage_reversal_per_part_v7
+            ON stock_movements(service_visit_part_id)
+            WHERE movement_type = 'SERVICE_USAGE_REVERSAL';
+        CREATE INDEX idx_stock_movements_inventory_item_id
+            ON stock_movements(inventory_item_id);
+        CREATE INDEX idx_service_visit_parts_service_visit_id
+            ON service_visit_parts(service_visit_id);
+        CREATE INDEX idx_service_visit_parts_inventory_item_id
+            ON service_visit_parts(inventory_item_id);
+        ",
+    )?;
+
+    let foreign_key_violation = transaction
+        .query_row(
+            "SELECT \"table\" FROM pragma_foreign_key_check LIMIT 1",
+            [],
+            |row| row.get(0),
+        )
+        .optional()?;
+    if let Some(table) = foreign_key_violation {
+        return Err(MigrationError::ForeignKeyIntegrityViolation { table });
+    }
+
+    transaction.pragma_update(None, "user_version", 7)?;
+    transaction.commit()?;
+    Ok(())
 }

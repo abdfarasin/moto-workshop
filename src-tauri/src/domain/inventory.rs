@@ -16,6 +16,8 @@ pub enum StockMovementType {
     Purchase,
     AdjustmentIn,
     AdjustmentOut,
+    ServiceUsage,
+    ServiceUsageReversal,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -29,6 +31,7 @@ pub enum InventoryValidationError {
     InvalidMinimumStock,
     InvalidInventoryItemId,
     InvalidTimestamp,
+    InvalidServiceVisitPartReference,
     InvalidQuantityDelta { movement_type: StockMovementType },
     TextTooLong(InventoryTextField),
     TextContainsControlCharacter(InventoryTextField),
@@ -181,6 +184,7 @@ impl InventoryItem {
 #[derive(Debug, PartialEq, Eq)]
 pub struct NewStockMovementInput {
     pub inventory_item_id: i64,
+    pub service_visit_part_id: Option<i64>,
     pub movement_type: StockMovementType,
     pub quantity_delta: i64,
     pub notes: Option<String>,
@@ -190,6 +194,7 @@ pub struct NewStockMovementInput {
 #[derive(Debug, PartialEq, Eq)]
 pub struct StockMovement {
     inventory_item_id: i64,
+    service_visit_part_id: Option<i64>,
     movement_type: StockMovementType,
     quantity_delta: i64,
     notes: Option<String>,
@@ -205,6 +210,19 @@ impl StockMovement {
             return Err(InventoryValidationError::InvalidTimestamp);
         }
 
+        let valid_reference = match input.movement_type {
+            StockMovementType::OpeningStock
+            | StockMovementType::Purchase
+            | StockMovementType::AdjustmentIn
+            | StockMovementType::AdjustmentOut => input.service_visit_part_id.is_none(),
+            StockMovementType::ServiceUsage | StockMovementType::ServiceUsageReversal => {
+                input.service_visit_part_id.is_some_and(|id| id > 0)
+            }
+        };
+        if !valid_reference {
+            return Err(InventoryValidationError::InvalidServiceVisitPartReference);
+        }
+
         let valid_quantity = match input.movement_type {
             StockMovementType::OpeningStock
             | StockMovementType::Purchase
@@ -213,6 +231,12 @@ impl StockMovement {
             }
             StockMovementType::AdjustmentOut => {
                 (-MAX_STORED_QUANTITY..=-1).contains(&input.quantity_delta)
+            }
+            StockMovementType::ServiceUsage => {
+                (-MAX_STORED_QUANTITY..=-1).contains(&input.quantity_delta)
+            }
+            StockMovementType::ServiceUsageReversal => {
+                (1..=MAX_STORED_QUANTITY).contains(&input.quantity_delta)
             }
         };
         if !valid_quantity {
@@ -226,6 +250,7 @@ impl StockMovement {
 
         Ok(Self {
             inventory_item_id: input.inventory_item_id,
+            service_visit_part_id: input.service_visit_part_id,
             movement_type: input.movement_type,
             quantity_delta: input.quantity_delta,
             notes,
@@ -239,6 +264,10 @@ impl StockMovement {
 
     pub fn movement_type(&self) -> StockMovementType {
         self.movement_type
+    }
+
+    pub fn service_visit_part_id(&self) -> Option<i64> {
+        self.service_visit_part_id
     }
 
     pub fn quantity_delta(&self) -> i64 {
