@@ -2,7 +2,7 @@ use std::{error::Error, fmt};
 
 use rusqlite::{Connection, OptionalExtension, Result};
 
-const MAX_SUPPORTED_SCHEMA_VERSION: i64 = 4;
+const MAX_SUPPORTED_SCHEMA_VERSION: i64 = 5;
 
 #[derive(Debug)]
 pub enum MigrationError {
@@ -78,6 +78,10 @@ pub fn migrate_database(connection: &mut Connection) -> std::result::Result<(), 
 
     if schema_version(connection)? < 4 {
         migrate_to_version_4(connection)?;
+    }
+
+    if schema_version(connection)? < 5 {
+        migrate_to_version_5(connection)?;
     }
 
     Ok(())
@@ -480,4 +484,236 @@ fn migrate_to_version_4(connection: &mut Connection) -> std::result::Result<(), 
     transaction.commit()?;
 
     Ok(())
+}
+
+fn migrate_to_version_5(connection: &mut Connection) -> Result<()> {
+    let transaction = connection.transaction()?;
+
+    transaction.execute_batch(
+        "
+        CREATE TABLE service_visits (
+            id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+            motorcycle_id       INTEGER NOT NULL,
+            owner_customer_id   INTEGER NOT NULL,
+            status              TEXT NOT NULL,
+            opened_at           INTEGER NOT NULL,
+            completed_at        INTEGER,
+            closed_at           INTEGER,
+            cancelled_at        INTEGER,
+            odometer_km         INTEGER,
+            customer_complaint  TEXT NOT NULL,
+            diagnosis           TEXT,
+            work_performed      TEXT,
+            labor_charge_fils   INTEGER NOT NULL DEFAULT 0,
+            cancellation_reason TEXT,
+            notes                TEXT,
+            created_at           INTEGER NOT NULL,
+            updated_at           INTEGER NOT NULL,
+            FOREIGN KEY (motorcycle_id) REFERENCES motorcycles(id) ON DELETE RESTRICT,
+            FOREIGN KEY (owner_customer_id) REFERENCES customers(id) ON DELETE RESTRICT,
+            CHECK (typeof(motorcycle_id) = 'integer'),
+            CHECK (typeof(owner_customer_id) = 'integer'),
+            CHECK (status IN ('OPEN', 'READY_FOR_PICKUP', 'CLOSED', 'CANCELLED')),
+            CHECK (typeof(opened_at) = 'integer' AND opened_at >= 0),
+            CHECK (typeof(created_at) = 'integer'),
+            CHECK (typeof(updated_at) = 'integer'),
+            CHECK (
+                odometer_km IS NULL
+                OR (
+                    typeof(odometer_km) = 'integer'
+                    AND odometer_km BETWEEN 0 AND 9999999
+                )
+            ),
+            CHECK (
+                typeof(customer_complaint) = 'text'
+                AND customer_complaint = trim(customer_complaint)
+                AND length(customer_complaint) BETWEEN 1 AND 4000
+            ),
+            CHECK (
+                diagnosis IS NULL
+                OR (
+                    typeof(diagnosis) = 'text'
+                    AND diagnosis = trim(diagnosis)
+                    AND length(diagnosis) BETWEEN 1 AND 4000
+                )
+            ),
+            CHECK (
+                work_performed IS NULL
+                OR (
+                    typeof(work_performed) = 'text'
+                    AND work_performed = trim(work_performed)
+                    AND length(work_performed) BETWEEN 1 AND 4000
+                )
+            ),
+            CHECK (
+                typeof(labor_charge_fils) = 'integer'
+                AND labor_charge_fils >= 0
+            ),
+            CHECK (
+                cancellation_reason IS NULL
+                OR (
+                    typeof(cancellation_reason) = 'text'
+                    AND cancellation_reason = trim(cancellation_reason)
+                    AND length(cancellation_reason) BETWEEN 1 AND 1000
+                )
+            ),
+            CHECK (
+                notes IS NULL
+                OR (
+                    typeof(notes) = 'text'
+                    AND notes = trim(notes)
+                    AND length(notes) BETWEEN 1 AND 4000
+                )
+            ),
+            CHECK (
+                (
+                    status = 'OPEN'
+                    AND completed_at IS NULL
+                    AND closed_at IS NULL
+                    AND cancelled_at IS NULL
+                    AND cancellation_reason IS NULL
+                )
+                OR (
+                    status = 'READY_FOR_PICKUP'
+                    AND typeof(completed_at) = 'integer'
+                    AND completed_at >= opened_at
+                    AND closed_at IS NULL
+                    AND cancelled_at IS NULL
+                    AND work_performed IS NOT NULL
+                    AND cancellation_reason IS NULL
+                )
+                OR (
+                    status = 'CLOSED'
+                    AND typeof(completed_at) = 'integer'
+                    AND completed_at >= opened_at
+                    AND typeof(closed_at) = 'integer'
+                    AND closed_at >= completed_at
+                    AND cancelled_at IS NULL
+                    AND work_performed IS NOT NULL
+                    AND cancellation_reason IS NULL
+                )
+                OR (
+                    status = 'CANCELLED'
+                    AND completed_at IS NULL
+                    AND closed_at IS NULL
+                    AND typeof(cancelled_at) = 'integer'
+                    AND cancelled_at >= opened_at
+                    AND cancellation_reason IS NOT NULL
+                )
+            )
+        );
+
+        CREATE TABLE invoices (
+            id               INTEGER PRIMARY KEY AUTOINCREMENT,
+            service_visit_id INTEGER NOT NULL UNIQUE,
+            status           TEXT NOT NULL DEFAULT 'DRAFT',
+            invoice_number   TEXT UNIQUE,
+            issued_at        INTEGER,
+            cancelled_at     INTEGER,
+            notes            TEXT,
+            created_at       INTEGER NOT NULL,
+            updated_at       INTEGER NOT NULL,
+            FOREIGN KEY (service_visit_id) REFERENCES service_visits(id) ON DELETE RESTRICT,
+            CHECK (typeof(service_visit_id) = 'integer'),
+            CHECK (status IN ('DRAFT', 'ISSUED', 'CANCELLED')),
+            CHECK (issued_at IS NULL OR typeof(issued_at) = 'integer'),
+            CHECK (cancelled_at IS NULL OR typeof(cancelled_at) = 'integer'),
+            CHECK (typeof(created_at) = 'integer'),
+            CHECK (typeof(updated_at) = 'integer')
+        );
+
+        CREATE TRIGGER validate_service_visit_owner_v5
+        BEFORE INSERT ON service_visits
+        WHEN NOT EXISTS (
+            SELECT 1
+            FROM motorcycles
+            WHERE id = NEW.motorcycle_id
+              AND customer_id = NEW.owner_customer_id
+        )
+        BEGIN
+            SELECT RAISE(ABORT, 'service visit owner must match motorcycle owner');
+        END;
+
+        CREATE TRIGGER protect_service_visit_identity_v5
+        BEFORE UPDATE OF motorcycle_id, owner_customer_id, opened_at ON service_visits
+        WHEN OLD.motorcycle_id IS NOT NEW.motorcycle_id
+          OR OLD.owner_customer_id IS NOT NEW.owner_customer_id
+          OR OLD.opened_at IS NOT NEW.opened_at
+        BEGIN
+            SELECT RAISE(ABORT, 'service visit historical identity is immutable');
+        END;
+
+        CREATE TRIGGER validate_service_visit_transition_v5
+        BEFORE UPDATE OF status ON service_visits
+        WHEN OLD.status != NEW.status
+         AND NOT (
+            (OLD.status = 'OPEN' AND NEW.status IN ('READY_FOR_PICKUP', 'CANCELLED'))
+            OR (OLD.status = 'READY_FOR_PICKUP' AND NEW.status IN ('OPEN', 'CLOSED'))
+         )
+        BEGIN
+            SELECT RAISE(ABORT, 'invalid service visit status transition');
+        END;
+
+        CREATE TRIGGER prevent_terminal_service_visit_update_v5
+        BEFORE UPDATE ON service_visits
+        WHEN OLD.status IN ('CLOSED', 'CANCELLED')
+        BEGIN
+            SELECT RAISE(ABORT, 'terminal service visit cannot be updated');
+        END;
+
+        CREATE TRIGGER prevent_service_visit_delete_v5
+        BEFORE DELETE ON service_visits
+        BEGIN
+            SELECT RAISE(ABORT, 'service visit cannot be deleted');
+        END;
+
+        CREATE TRIGGER create_draft_invoice_for_service_visit_v5
+        AFTER INSERT ON service_visits
+        BEGIN
+            INSERT INTO invoices (
+                service_visit_id,
+                status,
+                invoice_number,
+                issued_at,
+                cancelled_at,
+                notes,
+                created_at,
+                updated_at
+            ) VALUES (
+                NEW.id,
+                'DRAFT',
+                NULL,
+                NULL,
+                NULL,
+                NULL,
+                NEW.created_at,
+                NEW.created_at
+            );
+        END;
+
+        CREATE TRIGGER protect_invoice_visit_identity_v5
+        BEFORE UPDATE OF service_visit_id ON invoices
+        WHEN OLD.service_visit_id IS NOT NEW.service_visit_id
+        BEGIN
+            SELECT RAISE(ABORT, 'invoice service visit is immutable');
+        END;
+
+        CREATE TRIGGER prevent_invoice_delete_v5
+        BEFORE DELETE ON invoices
+        BEGIN
+            SELECT RAISE(ABORT, 'invoice cannot be deleted');
+        END;
+
+        CREATE UNIQUE INDEX one_active_service_visit_per_motorcycle
+            ON service_visits(motorcycle_id)
+            WHERE status IN ('OPEN', 'READY_FOR_PICKUP');
+
+        CREATE INDEX idx_service_visits_motorcycle_id
+            ON service_visits(motorcycle_id);
+        ",
+    )?;
+
+    transaction.pragma_update(None, "user_version", 5)?;
+
+    transaction.commit()
 }
