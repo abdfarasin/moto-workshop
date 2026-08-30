@@ -194,11 +194,108 @@ fn lists_only_usable_inventory_with_current_unit_information() {
     assert_eq!(choices[0].unit_name, "Liter");
     assert_eq!(choices[0].quantity_scale, 1_000);
     assert_eq!(choices[0].default_selling_price_fils, 7_000);
+    assert_eq!(choices[0].current_quantity, 0);
     assert_eq!(choices[1].item_name, "Oil Filter");
     assert_eq!(choices[1].sku.as_deref(), Some("FILTER"));
     assert_eq!(choices[1].unit_name, "Piece");
+    assert_eq!(choices[1].current_quantity, 0);
     assert!(!choices.iter().any(|item| item.id == archived_item_id));
     assert!(!choices.iter().any(|item| item.id == inactive_unit_item_id));
+}
+
+#[test]
+fn inventory_selection_derives_isolated_scaled_stock_with_usage_and_reversal() {
+    // # Arrange
+    let mut fixture = fixture();
+    let liter_unit_id = unit_id(&fixture.connection, "Liter");
+    let piece_unit_id = unit_id(&fixture.connection, "Piece");
+    let negative_item_id = insert_item(
+        &fixture.connection,
+        "Negative Oil",
+        Some("NEG-OIL"),
+        liter_unit_id,
+        7_000,
+        None,
+    );
+    let zero_history_item_id = insert_item(
+        &fixture.connection,
+        "Zero History",
+        Some("ZERO"),
+        piece_unit_id,
+        1_000,
+        None,
+    );
+    for (item_id, movement_type, delta, created_at) in [
+        (fixture.filter_item_id, "OPENING_STOCK", 20, 1_100),
+        (fixture.filter_item_id, "ADJUSTMENT_OUT", -3, 1_200),
+        (fixture.oil_item_id, "OPENING_STOCK", 10_000, 1_300),
+        (negative_item_id, "OPENING_STOCK", 1_000, 1_400),
+    ] {
+        fixture
+            .connection
+            .execute(
+                "INSERT INTO stock_movements (
+                    inventory_item_id, movement_type, quantity_delta, created_at
+                 ) VALUES (?1, ?2, ?3, ?4)",
+                params![item_id, movement_type, delta, created_at],
+            )
+            .unwrap();
+    }
+    let oil_part = ServiceVisitWorkspaceService::new(&mut fixture.connection)
+        .add_part(AddServiceVisitPartInput {
+            service_visit_id: fixture.visit_id,
+            inventory_item_id: fixture.oil_item_id,
+            quantity: 2_500,
+            unit_price_fils: 7_000,
+            created_at: 2_000,
+        })
+        .unwrap();
+    ServiceVisitWorkspaceService::new(&mut fixture.connection)
+        .add_part(AddServiceVisitPartInput {
+            service_visit_id: fixture.visit_id,
+            inventory_item_id: negative_item_id,
+            quantity: 2_500,
+            unit_price_fils: 7_000,
+            created_at: 2_100,
+        })
+        .unwrap();
+
+    // # Act
+    let before_reversal = ServiceVisitWorkspaceService::new(&mut fixture.connection)
+        .list_usable_inventory_items()
+        .unwrap();
+    ServiceVisitWorkspaceService::new(&mut fixture.connection)
+        .void_part(VoidServiceVisitPartInput {
+            service_visit_id: fixture.visit_id,
+            service_visit_part_id: oil_part.id,
+            voided_at: 2_200,
+            reason: None,
+        })
+        .unwrap();
+    let after_reversal = ServiceVisitWorkspaceService::new(&mut fixture.connection)
+        .list_usable_inventory_items()
+        .unwrap();
+
+    // # Assert
+    assert_eq!(
+        current_quantity(&before_reversal, fixture.filter_item_id),
+        17
+    );
+    assert_eq!(
+        current_quantity(&before_reversal, fixture.oil_item_id),
+        7_500
+    );
+    assert_eq!(current_quantity(&before_reversal, negative_item_id), -1_500);
+    assert_eq!(current_quantity(&before_reversal, zero_history_item_id), 0);
+    assert_eq!(
+        current_quantity(&after_reversal, fixture.oil_item_id),
+        10_000
+    );
+    assert_eq!(
+        current_quantity(&after_reversal, fixture.filter_item_id),
+        17
+    );
+    assert_eq!(current_quantity(&after_reversal, negative_item_id), -1_500);
 }
 
 #[test]
@@ -535,6 +632,17 @@ struct Fixture {
     visit_id: i64,
     filter_item_id: i64,
     oil_item_id: i64,
+}
+
+fn current_quantity(
+    items: &[moto_workshop_lib::application::service_visit_workspace::InventoryItemSelection],
+    item_id: i64,
+) -> i64 {
+    items
+        .iter()
+        .find(|item| item.id == item_id)
+        .expect("inventory item should be selectable")
+        .current_quantity
 }
 
 fn fixture() -> Fixture {

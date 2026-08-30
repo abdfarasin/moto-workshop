@@ -124,6 +124,7 @@ fn inventory_and_add_part_handlers_expose_only_safe_authoritative_data() {
     assert_eq!(inventory_json[0]["unitName"], "Liter");
     assert_eq!(inventory_json[0]["quantityScale"], 1_000);
     assert_eq!(inventory_json[0]["defaultSellingPriceFils"], 7_000);
+    assert_eq!(inventory_json[0]["currentQuantity"], 0);
     assert!(inventory_json[0].get("currentStock").is_none());
     assert_eq!(part.item_name, "Engine Oil");
     assert_eq!(part.unit_name, "Liter");

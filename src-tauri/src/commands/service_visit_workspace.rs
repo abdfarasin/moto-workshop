@@ -94,6 +94,7 @@ pub struct InventoryItemSelectionDto {
     pub unit_name: String,
     pub quantity_scale: i64,
     pub default_selling_price_fils: i64,
+    pub current_quantity: i64,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -390,6 +391,7 @@ impl From<InventoryItemSelection> for InventoryItemSelectionDto {
             unit_name: item.unit_name,
             quantity_scale: item.quantity_scale,
             default_selling_price_fils: item.default_selling_price_fils,
+            current_quantity: item.current_quantity,
         }
     }
 }

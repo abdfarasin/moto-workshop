@@ -129,7 +129,7 @@ Stock Movement instances expose no mutation behavior. Persistence supplies the p
 
 ### Service Visit workspace repositories
 
-`repositories/service_visit.rs` loads the complete Service Visit workspace header and historical Part rows, and owns the focused INSERT/UPDATE statements for work fields and Part mutations. `repositories/inventory.rs` loads selectable non-archived Inventory Items joined to active Unit metadata. Both remain persistence-focused and return owned rows; they do not calculate totals, normalize business input, or decide lifecycle policy.
+`repositories/service_visit.rs` loads the complete Service Visit workspace header and historical Part rows, and owns the focused INSERT/UPDATE statements for work fields and Part mutations. `repositories/inventory.rs` loads selectable non-archived Inventory Items joined to active Unit metadata and derives each Item's scaled integer `currentQuantity` in the same query by summing its immutable Stock Movements. Zero-history Items return zero, and negative totals remain unchanged. Both repositories remain persistence-focused and return owned rows; they do not normalize business input or decide lifecycle policy.
 
 ### Service Visit workspace application service
 
@@ -137,7 +137,7 @@ Stock Movement instances expose no mutation behavior. Persistence supplies the p
 
 - loads a Service Visit with its owner snapshot, Motorcycle presentation data, and ACTIVE/VOIDED Part history;
 - validates mutable work-field updates through the existing ServiceVisit domain lifecycle;
-- lists usable Inventory Items with current Unit name, scale, and suggested selling price;
+- lists usable Inventory Items with current Unit name, scale, suggested selling price, and ledger-derived scaled integer current quantity;
 - accepts only Item/Visit IDs, scaled quantity, charged price, and caller-supplied timestamps when adding a Part;
 - loads Item and Unit snapshot metadata inside the transaction, constructs the ServiceVisitPart domain object, and persists its authoritative integer line total;
 - voids ACTIVE parts through the existing domain normalization and chronology rules;
