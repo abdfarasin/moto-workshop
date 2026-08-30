@@ -7,6 +7,8 @@ export type ServiceVisitStatus =
 export type ServiceVisitPartStatus = "ACTIVE" | "VOIDED";
 
 export type ServiceVisitCommandErrorCategory =
+  | "motorcycleNotFound"
+  | "activeServiceVisitExists"
   | "serviceVisitNotFound"
   | "inventoryItemNotFound"
   | "serviceVisitPartNotFound"
@@ -89,6 +91,15 @@ export interface InventoryItemSelection {
   quantityScale: number;
   defaultSellingPriceFils: number;
   currentQuantity: number;
+}
+
+export interface CreateServiceVisitInput {
+  motorcycleId: number;
+  openedAt: number;
+  odometerKm: number | null;
+  customerComplaint: string;
+  notes: string | null;
+  createdAt: number;
 }
 
 export interface UpdateServiceVisitWorkInput {

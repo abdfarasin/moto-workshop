@@ -5,6 +5,7 @@ import {
   addServiceVisitPart,
   cancelServiceVisit,
   closeServiceVisit,
+  createServiceVisit,
   isServiceVisitCommandError,
   listServiceVisitInventoryItems,
   loadServiceVisitWorkspace,
@@ -19,6 +20,7 @@ import type {
   AddServiceVisitPartInput,
   CancelServiceVisitInput,
   CloseServiceVisitInput,
+  CreateServiceVisitInput,
   InventoryItemSelection,
   ServiceVisitPart,
   ServiceVisitStatus,
@@ -253,6 +255,52 @@ describe("Service Visit API", () => {
     });
     expectTypeOf(ready).toEqualTypeOf<ServiceVisitWorkspace>();
   });
+
+  test("creates a visit with the exact safe Tauri input wrapper", async () => {
+    // Arrange
+    const input: CreateServiceVisitInput = {
+      motorcycleId: 11,
+      openedAt: 2_000,
+      odometerKm: 18_750,
+      customerComplaint: "Engine stalls",
+      notes: null,
+      createdAt: 2_100,
+    };
+    invokeMock.mockResolvedValue(workspace);
+
+    // Act
+    const result = await createServiceVisit(input);
+
+    // Assert
+    expect(invokeMock).toHaveBeenCalledWith("create_service_visit", { input });
+    expectTypeOf(result).toEqualTypeOf<ServiceVisitWorkspace>();
+  });
+
+  test.each(["motorcycleNotFound", "activeServiceVisitExists"] as const)(
+    "preserves the new %s command error category",
+    async (category) => {
+      // Arrange
+      const input: CreateServiceVisitInput = {
+        motorcycleId: 11,
+        openedAt: 2_000,
+        odometerKm: null,
+        customerComplaint: "Engine stalls",
+        notes: null,
+        createdAt: 2_000,
+      };
+      invokeMock.mockRejectedValue({ category, message: "Creation rejected." });
+
+      // Act
+      const error = await createServiceVisit(input).catch(
+        (rejection: unknown) => rejection,
+      );
+
+      // Assert
+      expect(error).toBeInstanceOf(ServiceVisitCommandError);
+      expect(isServiceVisitCommandError(error)).toBe(true);
+      expect(error).toMatchObject({ category, message: "Creation rejected." });
+    },
+  );
 
   test("preserves a typed backend command error's category and message", async () => {
     // Arrange

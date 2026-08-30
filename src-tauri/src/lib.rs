@@ -6,7 +6,7 @@ mod repositories;
 pub mod runtime;
 
 use commands::service_visit_workspace::{
-    add_service_visit_part, cancel_service_visit, close_service_visit,
+    add_service_visit_part, cancel_service_visit, close_service_visit, create_service_visit,
     list_service_visit_inventory_items, load_service_visit_workspace,
     mark_service_visit_ready_for_pickup, reopen_service_visit, update_service_visit_work,
     void_service_visit_part,
@@ -25,6 +25,7 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            create_service_visit,
             load_service_visit_workspace,
             list_service_visit_inventory_items,
             update_service_visit_work,

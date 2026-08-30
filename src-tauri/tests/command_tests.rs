@@ -5,13 +5,14 @@ use tempfile::{tempdir, TempDir};
 use moto_workshop_lib::{
     commands::service_visit_workspace::{
         handle_add_service_visit_part, handle_cancel_service_visit, handle_close_service_visit,
-        handle_list_service_visit_inventory_items, handle_load_service_visit_workspace,
-        handle_mark_service_visit_ready_for_pickup, handle_reopen_service_visit,
-        handle_update_service_visit_work, handle_void_service_visit_part,
-        AddServiceVisitPartCommandInput, CancelServiceVisitCommandInput,
-        CloseServiceVisitCommandInput, CommandErrorCategory,
-        MarkServiceVisitReadyForPickupCommandInput, ReopenServiceVisitCommandInput,
-        UpdateServiceVisitWorkCommandInput, VoidServiceVisitPartCommandInput,
+        handle_create_service_visit, handle_list_service_visit_inventory_items,
+        handle_load_service_visit_workspace, handle_mark_service_visit_ready_for_pickup,
+        handle_reopen_service_visit, handle_update_service_visit_work,
+        handle_void_service_visit_part, AddServiceVisitPartCommandInput,
+        CancelServiceVisitCommandInput, CloseServiceVisitCommandInput, CommandErrorCategory,
+        CreateServiceVisitCommandInput, MarkServiceVisitReadyForPickupCommandInput,
+        ReopenServiceVisitCommandInput, UpdateServiceVisitWorkCommandInput,
+        VoidServiceVisitPartCommandInput,
     },
     db::open_database,
     runtime::database::{RuntimeDatabase, DATABASE_FILE_NAME},
@@ -391,6 +392,120 @@ fn lifecycle_command_inputs_accept_exact_camel_case_shapes() {
 }
 
 #[test]
+fn create_handler_uses_safe_input_authoritative_owner_and_stable_errors() {
+    // # Arrange
+    let fixture = fixture();
+    let motorcycle_id =
+        insert_motorcycle(&fixture.seed_connection, fixture.owner_id, "COMMAND-CREATE");
+    let input = CreateServiceVisitCommandInput {
+        motorcycle_id,
+        opened_at: 2_000,
+        odometer_km: Some(18_750),
+        customer_complaint: "  Engine stalls  ".into(),
+        notes: Some("  Customer will wait  ".into()),
+        created_at: 2_100,
+    };
+
+    // # Act
+    let created = handle_create_service_visit(&fixture.database, input)
+        .expect("create command should return the workspace");
+    let active_error = handle_create_service_visit(
+        &fixture.database,
+        CreateServiceVisitCommandInput {
+            motorcycle_id,
+            opened_at: 2_200,
+            odometer_km: None,
+            customer_complaint: "Second visit".into(),
+            notes: None,
+            created_at: 2_200,
+        },
+    )
+    .expect_err("active visit should return a stable error");
+    let missing_error = handle_create_service_visit(
+        &fixture.database,
+        CreateServiceVisitCommandInput {
+            motorcycle_id: 999_999,
+            opened_at: 2_200,
+            odometer_km: None,
+            customer_complaint: "Missing motorcycle".into(),
+            notes: None,
+            created_at: 2_200,
+        },
+    )
+    .expect_err("missing motorcycle should return a stable error");
+
+    // # Assert
+    let serialized = serde_json::to_value(&created).unwrap();
+    assert_eq!(serialized["visit"]["status"], "OPEN");
+    assert_eq!(serialized["visit"]["ownerCustomerId"], fixture.owner_id);
+    assert_eq!(serialized["visit"]["customerComplaint"], "Engine stalls");
+    assert_eq!(serialized["visit"]["notes"], "Customer will wait");
+    assert_eq!(serialized["visit"]["createdAt"], 2_100);
+    assert_eq!(serialized["visit"]["updatedAt"], 2_100);
+    assert_eq!(serialized["owner"]["id"], fixture.owner_id);
+    assert!(created.parts.is_empty());
+    assert_eq!(
+        active_error.category,
+        CommandErrorCategory::ActiveServiceVisitExists
+    );
+    assert_eq!(
+        missing_error.category,
+        CommandErrorCategory::MotorcycleNotFound
+    );
+    assert_eq!(
+        serde_json::to_value(active_error).unwrap()["category"],
+        "activeServiceVisitExists"
+    );
+    assert_eq!(
+        serde_json::to_value(missing_error).unwrap()["category"],
+        "motorcycleNotFound"
+    );
+    let invoice_count: i64 = fixture
+        .seed_connection
+        .query_row(
+            "SELECT COUNT(*) FROM invoices WHERE service_visit_id = ?1",
+            [created.visit.id],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(invoice_count, 1);
+}
+
+#[test]
+fn create_command_input_accepts_only_the_exact_camel_case_safe_shape() {
+    // # Arrange
+    let safe = json!({
+        "motorcycleId": 1,
+        "openedAt": 2,
+        "odometerKm": 3,
+        "customerComplaint": "Engine stalls",
+        "notes": null,
+        "createdAt": 4
+    });
+    let forged = json!({
+        "motorcycleId": 1,
+        "openedAt": 2,
+        "odometerKm": 3,
+        "customerComplaint": "Engine stalls",
+        "notes": null,
+        "createdAt": 4,
+        "ownerCustomerId": 99,
+        "status": "CLOSED",
+        "laborChargeFils": 50000
+    });
+
+    // # Act
+    let safe = serde_json::from_value::<CreateServiceVisitCommandInput>(safe);
+    let forged = serde_json::from_value::<CreateServiceVisitCommandInput>(forged);
+
+    // # Assert
+    let safe = safe.expect("safe camelCase input should deserialize");
+    assert_eq!(safe.motorcycle_id, 1);
+    assert_eq!(safe.customer_complaint, "Engine stalls");
+    assert!(forged.is_err());
+}
+
+#[test]
 fn command_inputs_reject_arbitrary_database_paths_and_snapshot_fields() {
     // # Arrange
     let unsafe_add = json!({
@@ -559,6 +674,32 @@ fn insert_item(connection: &Connection, name: &str, sku: &str, unit_id: i64, pri
                 name, sku, unit_id, default_selling_price_fils, created_at, updated_at
              ) VALUES (?1, ?2, ?3, ?4, 1000, 1000)",
             params![name, sku, unit_id, price],
+        )
+        .unwrap();
+    connection.last_insert_rowid()
+}
+
+fn insert_motorcycle(connection: &Connection, owner_id: i64, chassis_number: &str) -> i64 {
+    let make_id: i64 = connection
+        .query_row(
+            "SELECT id FROM motorcycle_makes WHERE name = 'Honda'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    let color_id: i64 = connection
+        .query_row(
+            "SELECT id FROM motorcycle_colors WHERE name = 'Black'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    connection
+        .execute(
+            "INSERT INTO motorcycles (
+                customer_id, make_id, model, chassis_number, color_id, created_at, updated_at
+             ) VALUES (?1, ?2, 'CB150R', ?3, ?4, 1000, 1000)",
+            params![owner_id, make_id, chassis_number, color_id],
         )
         .unwrap();
     connection.last_insert_rowid()

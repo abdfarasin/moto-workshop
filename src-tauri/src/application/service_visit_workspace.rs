@@ -1,6 +1,6 @@
 use std::{error::Error, fmt};
 
-use rusqlite::Connection;
+use rusqlite::{Connection, TransactionBehavior};
 
 use crate::{
     domain::{
@@ -101,6 +101,16 @@ pub struct InventoryItemSelection {
 }
 
 #[derive(Debug, PartialEq, Eq)]
+pub struct CreateServiceVisitInput {
+    pub motorcycle_id: i64,
+    pub opened_at: i64,
+    pub odometer_km: Option<i64>,
+    pub customer_complaint: String,
+    pub notes: Option<String>,
+    pub created_at: i64,
+}
+
+#[derive(Debug, PartialEq, Eq)]
 pub struct UpdateServiceVisitWorkInput {
     pub service_visit_id: i64,
     pub diagnosis: Option<String>,
@@ -158,6 +168,8 @@ pub struct CancelServiceVisitInput {
 
 #[derive(Debug)]
 pub enum ServiceVisitWorkspaceError {
+    MotorcycleNotFound(i64),
+    ActiveServiceVisitExists(i64),
     ServiceVisitNotFound(i64),
     InventoryItemNotFound(i64),
     ServiceVisitPartNotFound {
@@ -173,6 +185,10 @@ pub enum ServiceVisitWorkspaceError {
 impl fmt::Display for ServiceVisitWorkspaceError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            Self::MotorcycleNotFound(id) => write!(formatter, "motorcycle {id} was not found"),
+            Self::ActiveServiceVisitExists(id) => {
+                write!(formatter, "motorcycle {id} already has an active service visit")
+            }
             Self::ServiceVisitNotFound(id) => write!(formatter, "service visit {id} was not found"),
             Self::InventoryItemNotFound(id) => {
                 write!(formatter, "usable inventory item {id} was not found")
@@ -245,6 +261,44 @@ impl<'connection> ServiceVisitWorkspaceService<'connection> {
             .into_iter()
             .map(InventoryItemSelection::from)
             .collect())
+    }
+
+    pub fn create_service_visit(
+        &mut self,
+        input: CreateServiceVisitInput,
+    ) -> Result<ServiceVisitWorkspace, ServiceVisitWorkspaceError> {
+        if input.created_at < 0 {
+            return Err(ServiceVisitValidationError::InvalidTimestamp.into());
+        }
+        let transaction = self
+            .connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let repository = ServiceVisitRepository::new(&transaction);
+        let owner_customer_id = repository
+            .find_motorcycle_owner(input.motorcycle_id)?
+            .ok_or(ServiceVisitWorkspaceError::MotorcycleNotFound(
+                input.motorcycle_id,
+            ))?;
+        if repository
+            .find_active_visit_id(input.motorcycle_id)?
+            .is_some()
+        {
+            return Err(ServiceVisitWorkspaceError::ActiveServiceVisitExists(
+                input.motorcycle_id,
+            ));
+        }
+        let visit = ServiceVisit::open(NewServiceVisitInput {
+            motorcycle_id: input.motorcycle_id,
+            owner_customer_id,
+            opened_at: input.opened_at,
+            odometer_km: input.odometer_km,
+            customer_complaint: input.customer_complaint,
+            notes: input.notes,
+        })?;
+        let service_visit_id = repository.insert_service_visit(&visit, input.created_at)?;
+        let workspace = load_workspace(&transaction, service_visit_id)?;
+        transaction.commit()?;
+        Ok(workspace)
     }
 
     pub fn update_work(

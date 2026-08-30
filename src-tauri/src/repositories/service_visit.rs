@@ -3,7 +3,7 @@ use std::io::{Error as IoError, ErrorKind};
 use rusqlite::{params, types::Type, Connection, OptionalExtension};
 
 use crate::domain::{
-    service_visit::ServiceVisitStatus,
+    service_visit::{ServiceVisit, ServiceVisitStatus},
     service_visit_part::{ServiceVisitPart, ServiceVisitPartStatus},
 };
 
@@ -97,6 +97,64 @@ pub(crate) struct ServiceVisitRepository<'connection> {
 impl<'connection> ServiceVisitRepository<'connection> {
     pub fn new(connection: &'connection Connection) -> Self {
         Self { connection }
+    }
+
+    pub fn find_motorcycle_owner(&self, motorcycle_id: i64) -> rusqlite::Result<Option<i64>> {
+        self.connection
+            .query_row(
+                "SELECT customer_id FROM motorcycles WHERE id = ?1",
+                [motorcycle_id],
+                |row| row.get(0),
+            )
+            .optional()
+    }
+
+    pub fn find_active_visit_id(&self, motorcycle_id: i64) -> rusqlite::Result<Option<i64>> {
+        self.connection
+            .query_row(
+                "SELECT id FROM service_visits
+                 WHERE motorcycle_id = ?1 AND status IN ('OPEN', 'READY_FOR_PICKUP')
+                 LIMIT 1",
+                [motorcycle_id],
+                |row| row.get(0),
+            )
+            .optional()
+    }
+
+    pub fn insert_service_visit(
+        &self,
+        visit: &ServiceVisit,
+        created_at: i64,
+    ) -> rusqlite::Result<i64> {
+        self.connection.execute(
+            "INSERT INTO service_visits (
+                motorcycle_id, owner_customer_id, status, opened_at,
+                completed_at, closed_at, cancelled_at, odometer_km,
+                customer_complaint, diagnosis, work_performed, labor_charge_fils,
+                cancellation_reason, notes, created_at, updated_at
+             ) VALUES (
+                ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8,
+                ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?15
+             )",
+            params![
+                visit.motorcycle_id(),
+                visit.owner_customer_id(),
+                visit_status_name(visit.status()),
+                visit.opened_at(),
+                visit.completed_at(),
+                visit.closed_at(),
+                visit.cancelled_at(),
+                visit.odometer_km(),
+                visit.customer_complaint(),
+                visit.diagnosis(),
+                visit.work_performed(),
+                visit.labor_charge_fils(),
+                visit.cancellation_reason(),
+                visit.notes(),
+                created_at,
+            ],
+        )?;
+        Ok(self.connection.last_insert_rowid())
     }
 
     pub fn find_workspace_header(
@@ -230,19 +288,13 @@ impl<'connection> ServiceVisitRepository<'connection> {
         service_visit_id: i64,
         fields: ServiceVisitLifecycleFields<'_>,
     ) -> rusqlite::Result<()> {
-        let status = match fields.status {
-            ServiceVisitStatus::Open => "OPEN",
-            ServiceVisitStatus::ReadyForPickup => "READY_FOR_PICKUP",
-            ServiceVisitStatus::Closed => "CLOSED",
-            ServiceVisitStatus::Cancelled => "CANCELLED",
-        };
         let changed = self.connection.execute(
             "UPDATE service_visits
              SET status = ?1, completed_at = ?2, closed_at = ?3,
                  cancelled_at = ?4, cancellation_reason = ?5, updated_at = ?6
              WHERE id = ?7",
             params![
-                status,
+                visit_status_name(fields.status),
                 fields.completed_at,
                 fields.closed_at,
                 fields.cancelled_at,
@@ -297,6 +349,15 @@ impl<'connection> ServiceVisitRepository<'connection> {
         } else {
             Err(rusqlite::Error::QueryReturnedNoRows)
         }
+    }
+}
+
+fn visit_status_name(status: ServiceVisitStatus) -> &'static str {
+    match status {
+        ServiceVisitStatus::Open => "OPEN",
+        ServiceVisitStatus::ReadyForPickup => "READY_FOR_PICKUP",
+        ServiceVisitStatus::Closed => "CLOSED",
+        ServiceVisitStatus::Cancelled => "CANCELLED",
     }
 }
 

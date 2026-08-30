@@ -3,8 +3,8 @@ use serde::{Deserialize, Serialize};
 use crate::{
     application::service_visit_workspace::{
         AddServiceVisitPartInput, CancelServiceVisitInput, CloseServiceVisitInput,
-        InventoryItemSelection, MarkServiceVisitReadyForPickupInput, ReopenServiceVisitInput,
-        ServiceVisitDetails, ServiceVisitMotorcycle, ServiceVisitOwner,
+        CreateServiceVisitInput, InventoryItemSelection, MarkServiceVisitReadyForPickupInput,
+        ReopenServiceVisitInput, ServiceVisitDetails, ServiceVisitMotorcycle, ServiceVisitOwner,
         ServiceVisitPartHistoryLine, ServiceVisitWorkspace, ServiceVisitWorkspaceError,
         ServiceVisitWorkspaceService, UpdateServiceVisitWorkInput, VoidServiceVisitPartInput,
     },
@@ -119,6 +119,17 @@ pub enum ServiceVisitPartStatusDto {
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct CreateServiceVisitCommandInput {
+    pub motorcycle_id: i64,
+    pub opened_at: i64,
+    pub odometer_km: Option<i64>,
+    pub customer_complaint: String,
+    pub notes: Option<String>,
+    pub created_at: i64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct UpdateServiceVisitWorkCommandInput {
     pub service_visit_id: i64,
     pub diagnosis: Option<String>,
@@ -190,12 +201,22 @@ pub struct CommandError {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub enum CommandErrorCategory {
+    MotorcycleNotFound,
+    ActiveServiceVisitExists,
     ServiceVisitNotFound,
     InventoryItemNotFound,
     ServiceVisitPartNotFound,
     LifecycleRejected,
     ValidationError,
     DatabaseError,
+}
+
+#[tauri::command]
+pub fn create_service_visit(
+    database: tauri::State<'_, RuntimeDatabase>,
+    input: CreateServiceVisitCommandInput,
+) -> CommandResult<ServiceVisitWorkspaceDto> {
+    handle_create_service_visit(&database, input)
 }
 
 #[tauri::command]
@@ -276,6 +297,17 @@ pub fn handle_load_service_visit_workspace(
     let result = {
         let mut connection = database.lock().map_err(|_| CommandError::database())?;
         ServiceVisitWorkspaceService::new(&mut connection).load_workspace(service_visit_id)
+    };
+    result.map(Into::into).map_err(Into::into)
+}
+
+pub fn handle_create_service_visit(
+    database: &RuntimeDatabase,
+    input: CreateServiceVisitCommandInput,
+) -> CommandResult<ServiceVisitWorkspaceDto> {
+    let result = {
+        let mut connection = database.lock().map_err(|_| CommandError::database())?;
+        ServiceVisitWorkspaceService::new(&mut connection).create_service_visit(input.into())
     };
     result.map(Into::into).map_err(Into::into)
 }
@@ -381,6 +413,14 @@ impl CommandError {
 impl From<ServiceVisitWorkspaceError> for CommandError {
     fn from(error: ServiceVisitWorkspaceError) -> Self {
         match error {
+            ServiceVisitWorkspaceError::MotorcycleNotFound(id) => Self {
+                category: CommandErrorCategory::MotorcycleNotFound,
+                message: format!("Motorcycle {id} was not found."),
+            },
+            ServiceVisitWorkspaceError::ActiveServiceVisitExists(id) => Self {
+                category: CommandErrorCategory::ActiveServiceVisitExists,
+                message: format!("Motorcycle {id} already has an active Service Visit."),
+            },
             ServiceVisitWorkspaceError::ServiceVisitNotFound(id) => Self {
                 category: CommandErrorCategory::ServiceVisitNotFound,
                 message: format!("Service Visit {id} was not found."),
@@ -545,6 +585,19 @@ impl From<UpdateServiceVisitWorkCommandInput> for UpdateServiceVisitWorkInput {
             notes: input.notes,
             odometer_km: input.odometer_km,
             updated_at: input.updated_at,
+        }
+    }
+}
+
+impl From<CreateServiceVisitCommandInput> for CreateServiceVisitInput {
+    fn from(input: CreateServiceVisitCommandInput) -> Self {
+        Self {
+            motorcycle_id: input.motorcycle_id,
+            opened_at: input.opened_at,
+            odometer_km: input.odometer_km,
+            customer_complaint: input.customer_complaint,
+            notes: input.notes,
+            created_at: input.created_at,
         }
     }
 }

@@ -4,6 +4,7 @@ import type {
   AddServiceVisitPartInput,
   CancelServiceVisitInput,
   CloseServiceVisitInput,
+  CreateServiceVisitInput,
   InventoryItemSelection,
   MarkServiceVisitReadyForPickupInput,
   ReopenServiceVisitInput,
@@ -16,6 +17,8 @@ import type {
 } from "./serviceVisitApi.types";
 
 const commandErrorCategories: readonly ServiceVisitCommandErrorCategory[] = [
+  "motorcycleNotFound",
+  "activeServiceVisitExists",
   "serviceVisitNotFound",
   "inventoryItemNotFound",
   "serviceVisitPartNotFound",
@@ -94,6 +97,14 @@ export function loadServiceVisitWorkspace(
   );
 }
 
+export function createServiceVisit(
+  input: CreateServiceVisitInput,
+): Promise<ServiceVisitWorkspace> {
+  return invokeServiceVisitCommand<ServiceVisitWorkspace>("create_service_visit", {
+    input,
+  });
+}
+
 export function listServiceVisitInventoryItems(): Promise<
   InventoryItemSelection[]
 > {
@@ -167,6 +178,7 @@ export type {
   AddServiceVisitPartInput,
   CancelServiceVisitInput,
   CloseServiceVisitInput,
+  CreateServiceVisitInput,
   InventoryItemSelection,
   MarkServiceVisitReadyForPickupInput,
   ReopenServiceVisitInput,
