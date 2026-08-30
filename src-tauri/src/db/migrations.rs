@@ -2,7 +2,7 @@ use std::{error::Error, fmt};
 
 use rusqlite::{Connection, OptionalExtension, Result};
 
-const MAX_SUPPORTED_SCHEMA_VERSION: i64 = 5;
+const MAX_SUPPORTED_SCHEMA_VERSION: i64 = 6;
 
 #[derive(Debug)]
 pub enum MigrationError {
@@ -82,6 +82,10 @@ pub fn migrate_database(connection: &mut Connection) -> std::result::Result<(), 
 
     if schema_version(connection)? < 5 {
         migrate_to_version_5(connection)?;
+    }
+
+    if schema_version(connection)? < 6 {
+        migrate_to_version_6(connection)?;
     }
 
     Ok(())
@@ -714,6 +718,187 @@ fn migrate_to_version_5(connection: &mut Connection) -> Result<()> {
     )?;
 
     transaction.pragma_update(None, "user_version", 5)?;
+
+    transaction.commit()
+}
+
+fn migrate_to_version_6(connection: &mut Connection) -> Result<()> {
+    let transaction = connection.transaction()?;
+
+    transaction.execute_batch(
+        "
+        CREATE TABLE inventory_units (
+            id             INTEGER PRIMARY KEY AUTOINCREMENT,
+            name           TEXT NOT NULL COLLATE NOCASE UNIQUE,
+            quantity_scale INTEGER NOT NULL,
+            active         INTEGER NOT NULL DEFAULT 1,
+            CHECK (
+                typeof(name) = 'text'
+                AND name = trim(name)
+                AND length(name) BETWEEN 1 AND 40
+            ),
+            CHECK (
+                typeof(quantity_scale) = 'integer'
+                AND quantity_scale IN (1, 10, 100, 1000)
+            ),
+            CHECK (typeof(active) = 'integer' AND active IN (0, 1))
+        );
+
+        CREATE TABLE inventory_items (
+            id                          INTEGER PRIMARY KEY AUTOINCREMENT,
+            name                        TEXT NOT NULL,
+            sku                         TEXT COLLATE NOCASE UNIQUE,
+            unit_id                     INTEGER NOT NULL,
+            default_purchase_price_fils INTEGER,
+            default_selling_price_fils  INTEGER NOT NULL,
+            minimum_stock_quantity      INTEGER NOT NULL DEFAULT 0,
+            notes                       TEXT,
+            created_at                  INTEGER NOT NULL,
+            updated_at                  INTEGER NOT NULL,
+            archived_at                 INTEGER,
+            FOREIGN KEY (unit_id) REFERENCES inventory_units(id) ON DELETE RESTRICT,
+            CHECK (
+                typeof(name) = 'text'
+                AND name = trim(name)
+                AND length(name) BETWEEN 1 AND 150
+            ),
+            CHECK (
+                sku IS NULL
+                OR (
+                    typeof(sku) = 'text'
+                    AND sku = trim(sku)
+                    AND length(sku) BETWEEN 1 AND 64
+                )
+            ),
+            CHECK (typeof(unit_id) = 'integer'),
+            CHECK (
+                default_purchase_price_fils IS NULL
+                OR (
+                    typeof(default_purchase_price_fils) = 'integer'
+                    AND default_purchase_price_fils BETWEEN 0 AND 1000000000
+                )
+            ),
+            CHECK (
+                typeof(default_selling_price_fils) = 'integer'
+                AND default_selling_price_fils BETWEEN 0 AND 1000000000
+            ),
+            CHECK (
+                typeof(minimum_stock_quantity) = 'integer'
+                AND minimum_stock_quantity BETWEEN 0 AND 1000000000
+            ),
+            CHECK (
+                notes IS NULL
+                OR (
+                    typeof(notes) = 'text'
+                    AND notes = trim(notes)
+                    AND length(notes) BETWEEN 1 AND 2000
+                )
+            ),
+            CHECK (typeof(created_at) = 'integer'),
+            CHECK (typeof(updated_at) = 'integer'),
+            CHECK (archived_at IS NULL OR typeof(archived_at) = 'integer')
+        );
+
+        CREATE TABLE stock_movements (
+            id                INTEGER PRIMARY KEY AUTOINCREMENT,
+            inventory_item_id INTEGER NOT NULL,
+            movement_type     TEXT NOT NULL,
+            quantity_delta    INTEGER NOT NULL,
+            notes             TEXT,
+            created_at        INTEGER NOT NULL,
+            FOREIGN KEY (inventory_item_id) REFERENCES inventory_items(id) ON DELETE RESTRICT,
+            CHECK (typeof(inventory_item_id) = 'integer'),
+            CHECK (
+                movement_type IN (
+                    'OPENING_STOCK',
+                    'PURCHASE',
+                    'ADJUSTMENT_IN',
+                    'ADJUSTMENT_OUT'
+                )
+            ),
+            CHECK (
+                typeof(quantity_delta) = 'integer'
+                AND (
+                    (
+                        movement_type IN ('OPENING_STOCK', 'PURCHASE', 'ADJUSTMENT_IN')
+                        AND quantity_delta BETWEEN 1 AND 1000000000
+                    )
+                    OR (
+                        movement_type = 'ADJUSTMENT_OUT'
+                        AND quantity_delta BETWEEN -1000000000 AND -1
+                    )
+                )
+            ),
+            CHECK (
+                notes IS NULL
+                OR (
+                    typeof(notes) = 'text'
+                    AND notes = trim(notes)
+                    AND length(notes) BETWEEN 1 AND 2000
+                )
+            ),
+            CHECK (typeof(created_at) = 'integer' AND created_at >= 0)
+        );
+
+        CREATE TRIGGER protect_referenced_inventory_unit_scale_v6
+        BEFORE UPDATE OF quantity_scale ON inventory_units
+        WHEN OLD.quantity_scale IS NOT NEW.quantity_scale
+         AND EXISTS (
+            SELECT 1
+            FROM inventory_items
+            WHERE unit_id = OLD.id
+         )
+        BEGIN
+            SELECT RAISE(ABORT, 'referenced inventory unit scale cannot change');
+        END;
+
+        CREATE TRIGGER prevent_inventory_unit_delete_v6
+        BEFORE DELETE ON inventory_units
+        BEGIN
+            SELECT RAISE(ABORT, 'inventory unit cannot be deleted');
+        END;
+
+        CREATE TRIGGER protect_inventory_item_unit_with_history_v6
+        BEFORE UPDATE OF unit_id ON inventory_items
+        WHEN OLD.unit_id IS NOT NEW.unit_id
+         AND EXISTS (
+            SELECT 1
+            FROM stock_movements
+            WHERE inventory_item_id = OLD.id
+         )
+        BEGIN
+            SELECT RAISE(ABORT, 'inventory item unit cannot change after stock movement');
+        END;
+
+        CREATE TRIGGER prevent_inventory_item_delete_v6
+        BEFORE DELETE ON inventory_items
+        BEGIN
+            SELECT RAISE(ABORT, 'inventory item cannot be deleted');
+        END;
+
+        CREATE TRIGGER prevent_stock_movement_update_v6
+        BEFORE UPDATE ON stock_movements
+        BEGIN
+            SELECT RAISE(ABORT, 'stock movement cannot be updated');
+        END;
+
+        CREATE TRIGGER prevent_stock_movement_delete_v6
+        BEFORE DELETE ON stock_movements
+        BEGIN
+            SELECT RAISE(ABORT, 'stock movement cannot be deleted');
+        END;
+
+        INSERT INTO inventory_units (name, quantity_scale, active)
+        VALUES
+            ('Piece', 1, 1),
+            ('Liter', 1000, 1);
+
+        CREATE INDEX idx_stock_movements_inventory_item_id
+            ON stock_movements(inventory_item_id);
+        ",
+    )?;
+
+    transaction.pragma_update(None, "user_version", 6)?;
 
     transaction.commit()
 }

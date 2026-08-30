@@ -19,7 +19,7 @@ fn fresh_database_migrates_to_latest_schema_version() {
     migrate_database(&mut connection).expect("database migrations should succeed");
 
     // # Assert
-    assert_eq!(current_schema_version(&connection), 5);
+    assert_eq!(current_schema_version(&connection), 6);
     assert!(table_exists(&connection, "customers"));
     assert!(table_exists(&connection, "motorcycle_makes"));
     assert!(table_exists(&connection, "motorcycle_colors"));
@@ -27,6 +27,9 @@ fn fresh_database_migrates_to_latest_schema_version() {
     assert!(table_exists(&connection, "motorcycles"));
     assert!(table_exists(&connection, "service_visits"));
     assert!(table_exists(&connection, "invoices"));
+    assert!(table_exists(&connection, "inventory_units"));
+    assert!(table_exists(&connection, "inventory_items"));
+    assert!(table_exists(&connection, "stock_movements"));
 }
 
 #[test]
@@ -43,7 +46,7 @@ fn migrating_an_already_migrated_database_is_safe() {
     migrate_database(&mut connection).expect("second migration should also succeed");
 
     // # Assert
-    assert_eq!(current_schema_version(&connection), 5);
+    assert_eq!(current_schema_version(&connection), 6);
     assert!(table_exists(&connection, "customers"));
     assert!(table_exists(&connection, "motorcycle_makes"));
     assert!(table_exists(&connection, "motorcycle_colors"));
@@ -95,7 +98,7 @@ fn version_one_database_upgrades_to_latest_version() {
     migrate_database(&mut connection).expect("version-one database should upgrade");
 
     // # Assert
-    assert_eq!(current_schema_version(&connection), 5);
+    assert_eq!(current_schema_version(&connection), 6);
     assert!(table_exists(&connection, "motorcycle_makes"));
     assert!(table_exists(&connection, "motorcycle_colors"));
     assert!(table_exists(&connection, "jordan_plate_codes"));
@@ -156,7 +159,7 @@ fn version_two_database_upgrades_to_latest_and_preserves_customer_and_motorcycle
     migrate_database(&mut connection).expect("version-two database should upgrade");
 
     // # Assert
-    assert_eq!(current_schema_version(&connection), 5);
+    assert_eq!(current_schema_version(&connection), 6);
     let customer: (String, String, Option<String>) = connection
         .query_row(
             "SELECT name, phone, notes FROM customers WHERE id = ?1",
@@ -232,6 +235,25 @@ fn migration_four_stamps_version_four_before_migration_five_runs() {
     assert!(column_exists(&connection, "motorcycles", "chassis_number"));
     assert!(!table_exists(&connection, "service_visits"));
     assert!(!table_exists(&connection, "invoices"));
+}
+
+#[test]
+fn migration_five_stamps_version_five_before_migration_six_runs() {
+    // # Arrange
+    let temp_dir = tempdir().expect("temporary directory should be created");
+    let database_path = temp_dir.path().join("test.db");
+    let mut connection = open_database(&database_path).expect("database should open");
+
+    // # Act
+    stop_after_migration_five(&mut connection);
+
+    // # Assert
+    assert_eq!(current_schema_version(&connection), 5);
+    assert!(table_exists(&connection, "service_visits"));
+    assert!(table_exists(&connection, "invoices"));
+    assert!(!table_exists(&connection, "inventory_units"));
+    assert!(!table_exists(&connection, "inventory_items"));
+    assert!(!table_exists(&connection, "stock_movements"));
 }
 
 #[test]
@@ -374,7 +396,7 @@ fn version_four_database_upgrades_to_five_preserving_customer_and_motorcycle() {
     let motorcycle_id = connection.last_insert_rowid();
 
     // # Act
-    migrate_database(&mut connection).expect("version-four database should upgrade");
+    stop_after_migration_five(&mut connection);
 
     // # Assert
     assert_eq!(current_schema_version(&connection), 5);
@@ -391,6 +413,94 @@ fn version_four_database_upgrades_to_five_preserving_customer_and_motorcycle() {
         preserved,
         (motorcycle_id, customer_id, "FRAME/LEGACY".to_string())
     );
+}
+
+#[test]
+fn version_five_database_upgrades_to_six_preserving_existing_business_data() {
+    // # Arrange
+    let temp_dir = tempdir().expect("temporary directory should be created");
+    let database_path = temp_dir.path().join("test.db");
+    let mut connection = open_database(&database_path).expect("database should open");
+    stop_after_migration_five(&mut connection);
+    let (customer_id, motorcycle_id, visit_id, invoice_id) =
+        insert_version_five_business_data(&connection);
+
+    // # Act
+    migrate_database(&mut connection).expect("version-five database should upgrade");
+
+    // # Assert
+    assert_eq!(current_schema_version(&connection), 6);
+    assert!(table_exists(&connection, "inventory_units"));
+    assert!(table_exists(&connection, "inventory_items"));
+    assert!(table_exists(&connection, "stock_movements"));
+    let preserved: (i64, i64, i64, i64) = connection
+        .query_row(
+            "SELECT c.id, m.id, v.id, i.id
+             FROM customers c
+             JOIN motorcycles m ON m.customer_id = c.id
+             JOIN service_visits v ON v.motorcycle_id = m.id
+             JOIN invoices i ON i.service_visit_id = v.id",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+        )
+        .expect("existing v5 data should remain related");
+    assert_eq!(
+        preserved,
+        (customer_id, motorcycle_id, visit_id, invoice_id)
+    );
+}
+
+#[test]
+fn failed_migration_six_rolls_back_all_new_objects_and_preserves_v5_data() {
+    // # Arrange
+    let temp_dir = tempdir().expect("temporary directory should be created");
+    let database_path = temp_dir.path().join("test.db");
+    let mut connection = open_database(&database_path).expect("database should open");
+    stop_after_migration_five(&mut connection);
+    let expected_ids = insert_version_five_business_data(&connection);
+    connection
+        .execute_batch("CREATE INDEX idx_stock_movements_inventory_item_id ON customers(id);")
+        .expect("late migration-six blocker should be created");
+    let schema_before = schema_objects(&connection);
+
+    // # Act
+    let result = migrate_database(&mut connection);
+
+    // # Assert
+    assert!(result.is_err());
+    assert_eq!(current_schema_version(&connection), 5);
+    assert_eq!(schema_objects(&connection), schema_before);
+    for object in [
+        "inventory_units",
+        "inventory_items",
+        "stock_movements",
+        "protect_referenced_inventory_unit_scale_v6",
+        "prevent_inventory_unit_delete_v6",
+        "protect_inventory_item_unit_with_history_v6",
+        "prevent_inventory_item_delete_v6",
+        "prevent_stock_movement_update_v6",
+        "prevent_stock_movement_delete_v6",
+    ] {
+        assert!(
+            !schema_object_exists(&connection, object),
+            "object: {object}"
+        );
+    }
+    let preserved: (i64, i64, i64, i64) = connection
+        .query_row(
+            "SELECT c.id, m.id, v.id, i.id
+             FROM customers c
+             JOIN motorcycles m ON m.customer_id = c.id
+             JOIN service_visits v ON v.motorcycle_id = m.id
+             JOIN invoices i ON i.service_visit_id = v.id",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+        )
+        .expect("v5 data should remain after rollback");
+    assert_eq!(preserved, expected_ids);
+    connection
+        .execute_batch("DROP INDEX idx_stock_movements_inventory_item_id;")
+        .expect("migration-six blocker should be removed");
 }
 
 #[test]
@@ -493,7 +603,7 @@ fn failed_migration_four_rolls_back_to_the_original_motorcycles_table() {
 }
 
 #[test]
-fn version_five_migration_is_a_no_op_when_rerun() {
+fn version_six_migration_is_a_no_op_when_rerun() {
     // # Arrange
     let temp_dir = tempdir().expect("temporary directory should be created");
     let database_path = temp_dir.path().join("test.db");
@@ -502,16 +612,16 @@ fn version_five_migration_is_a_no_op_when_rerun() {
     let schema_before = schema_objects(&connection);
 
     // # Act
-    migrate_database(&mut connection).expect("version-five rerun should succeed");
+    migrate_database(&mut connection).expect("version-six rerun should succeed");
 
     // # Assert
-    assert_eq!(current_schema_version(&connection), 5);
+    assert_eq!(current_schema_version(&connection), 6);
     assert_eq!(schema_objects(&connection), schema_before);
 }
 
 #[test]
 fn databases_newer_than_supported_are_rejected_without_modification() {
-    for future_version in [6_i64, 999_i64] {
+    for future_version in [7_i64, 999_i64] {
         // # Arrange
         let temp_dir = tempdir().expect("temporary directory should be created");
         let database_path = temp_dir.path().join(format!("future-{future_version}.db"));
@@ -535,7 +645,7 @@ fn databases_newer_than_supported_are_rejected_without_modification() {
             result,
             Err(MigrationError::UnsupportedSchemaVersion {
                 found,
-                max_supported: 5
+                max_supported: 6
             }) if found == future_version
         ));
         assert_eq!(current_schema_version(&connection), future_version);
@@ -735,6 +845,77 @@ fn stop_after_migration_four(connection: &mut rusqlite::Connection) {
     connection
         .execute_batch("DROP VIEW service_visits;")
         .expect("migration-five blocker should be removed");
+}
+
+fn stop_after_migration_five(connection: &mut rusqlite::Connection) {
+    connection
+        .execute_batch("CREATE VIEW inventory_units AS SELECT 1 AS migration_blocker;")
+        .expect("migration-six blocker should be created");
+
+    let result = migrate_database(connection);
+    assert!(
+        result.is_err(),
+        "the migration-six blocker should stop the migration runner"
+    );
+    assert_eq!(current_schema_version(connection), 5);
+
+    connection
+        .execute_batch("DROP VIEW inventory_units;")
+        .expect("migration-six blocker should be removed");
+}
+
+fn insert_version_five_business_data(connection: &rusqlite::Connection) -> (i64, i64, i64, i64) {
+    connection
+        .execute(
+            "INSERT INTO customers (name, phone, created_at, updated_at)
+             VALUES ('Existing owner', '+962791234567', 1000, 1000)",
+            [],
+        )
+        .expect("v5 customer should insert");
+    let customer_id = connection.last_insert_rowid();
+    let make_id: i64 = connection
+        .query_row(
+            "SELECT id FROM motorcycle_makes WHERE name = 'Honda'",
+            [],
+            |row| row.get(0),
+        )
+        .expect("seeded make should exist");
+    let color_id: i64 = connection
+        .query_row(
+            "SELECT id FROM motorcycle_colors WHERE name = 'Black'",
+            [],
+            |row| row.get(0),
+        )
+        .expect("seeded color should exist");
+    connection
+        .execute(
+            "INSERT INTO motorcycles (
+                customer_id, make_id, model, chassis_number, color_id,
+                created_at, updated_at
+             ) VALUES (?1, ?2, 'Existing bike', 'FRAME/V5', ?3, 1000, 1000)",
+            (customer_id, make_id, color_id),
+        )
+        .expect("v5 motorcycle should insert");
+    let motorcycle_id = connection.last_insert_rowid();
+    connection
+        .execute(
+            "INSERT INTO service_visits (
+                motorcycle_id, owner_customer_id, status, opened_at,
+                customer_complaint, created_at, updated_at
+             ) VALUES (?1, ?2, 'OPEN', 1000, 'Existing complaint', 1000, 1000)",
+            (motorcycle_id, customer_id),
+        )
+        .expect("v5 service visit should insert");
+    let visit_id = connection.last_insert_rowid();
+    let invoice_id: i64 = connection
+        .query_row(
+            "SELECT id FROM invoices WHERE service_visit_id = ?1",
+            [visit_id],
+            |row| row.get(0),
+        )
+        .expect("v5 draft invoice should exist");
+
+    (customer_id, motorcycle_id, visit_id, invoice_id)
 }
 
 fn create_validation_trigger_blocker(connection: &rusqlite::Connection, trigger_name: &str) {
