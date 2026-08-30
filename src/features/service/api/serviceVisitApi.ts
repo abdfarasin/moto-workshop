@@ -5,9 +5,12 @@ import type {
   CancelServiceVisitInput,
   CloseServiceVisitInput,
   CreateServiceVisitInput,
+  CustomerMotorcycleLookup,
+  CustomerSummary,
   InventoryItemSelection,
   MarkServiceVisitReadyForPickupInput,
   ReopenServiceVisitInput,
+  SearchCustomersInput,
   ServiceVisitCommandErrorCategory,
   ServiceVisitCommandErrorPayload,
   ServiceVisitPart,
@@ -17,6 +20,7 @@ import type {
 } from "./serviceVisitApi.types";
 
 const commandErrorCategories: readonly ServiceVisitCommandErrorCategory[] = [
+  "customerNotFound",
   "motorcycleNotFound",
   "activeServiceVisitExists",
   "serviceVisitNotFound",
@@ -105,6 +109,23 @@ export function createServiceVisit(
   });
 }
 
+export function searchCustomers(
+  input: SearchCustomersInput,
+): Promise<CustomerSummary[]> {
+  return invokeServiceVisitCommand<CustomerSummary[]>("search_customers", {
+    input,
+  });
+}
+
+export function listCustomerMotorcycles(
+  customerId: number,
+): Promise<CustomerMotorcycleLookup[]> {
+  return invokeServiceVisitCommand<CustomerMotorcycleLookup[]>(
+    "list_customer_motorcycles",
+    { input: { customerId } },
+  );
+}
+
 export function listServiceVisitInventoryItems(): Promise<
   InventoryItemSelection[]
 > {
@@ -175,13 +196,17 @@ export function cancelServiceVisit(
 }
 
 export type {
+  ActiveServiceVisitStatus,
   AddServiceVisitPartInput,
   CancelServiceVisitInput,
   CloseServiceVisitInput,
   CreateServiceVisitInput,
+  CustomerMotorcycleLookup,
+  CustomerSummary,
   InventoryItemSelection,
   MarkServiceVisitReadyForPickupInput,
   ReopenServiceVisitInput,
+  SearchCustomersInput,
   ServiceVisitCommandErrorCategory,
   ServiceVisitCommandErrorPayload,
   ServiceVisitDetails,

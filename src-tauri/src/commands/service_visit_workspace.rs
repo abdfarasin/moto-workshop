@@ -201,6 +201,7 @@ pub struct CommandError {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub enum CommandErrorCategory {
+    CustomerNotFound,
     MotorcycleNotFound,
     ActiveServiceVisitExists,
     ServiceVisitNotFound,
@@ -402,7 +403,7 @@ pub fn handle_cancel_service_visit(
 }
 
 impl CommandError {
-    fn database() -> Self {
+    pub(crate) fn database() -> Self {
         Self {
             category: CommandErrorCategory::DatabaseError,
             message: "The workshop database operation failed.".into(),

@@ -7,11 +7,13 @@ import {
   closeServiceVisit,
   createServiceVisit,
   isServiceVisitCommandError,
+  listCustomerMotorcycles,
   listServiceVisitInventoryItems,
   loadServiceVisitWorkspace,
   markServiceVisitReadyForPickup,
   reopenServiceVisit,
   ServiceVisitCommandError,
+  searchCustomers,
   UnexpectedServiceVisitApiError,
   updateServiceVisitWork,
   voidServiceVisitPart,
@@ -22,6 +24,8 @@ import type {
   CloseServiceVisitInput,
   CreateServiceVisitInput,
   InventoryItemSelection,
+  CustomerMotorcycleLookup,
+  CustomerSummary,
   ServiceVisitPart,
   ServiceVisitStatus,
   ServiceVisitWorkspace,
@@ -274,6 +278,74 @@ describe("Service Visit API", () => {
     // Assert
     expect(invokeMock).toHaveBeenCalledWith("create_service_visit", { input });
     expectTypeOf(result).toEqualTypeOf<ServiceVisitWorkspace>();
+  });
+
+  test("searches Customers with the exact lookup command and input wrapper", async () => {
+    // Arrange
+    const customers: CustomerSummary[] = [
+      { id: 13, name: "Ahmad Ali", phone: "+962791234567" },
+    ];
+    const input = { query: "Ahmad", limit: 25 };
+    invokeMock.mockResolvedValue(customers);
+
+    // Act
+    const result = await searchCustomers(input);
+
+    // Assert
+    expect(invokeMock).toHaveBeenCalledWith("search_customers", { input });
+    expect(result).toEqual(customers);
+    expectTypeOf(result).toEqualTypeOf<CustomerSummary[]>();
+  });
+
+  test("lists a Customer's Motorcycles with active Visit state", async () => {
+    // Arrange
+    const motorcycles: CustomerMotorcycleLookup[] = [
+      {
+        id: 11,
+        makeName: "Honda",
+        model: "CB150R",
+        year: 2022,
+        colorName: "Black",
+        plateCode: "29",
+        plateNumber: 12345,
+        vin: null,
+        chassisNumber: null,
+        activeServiceVisitId: 7,
+        activeServiceVisitStatus: "OPEN",
+      },
+    ];
+    invokeMock.mockResolvedValue(motorcycles);
+
+    // Act
+    const result = await listCustomerMotorcycles(13);
+
+    // Assert
+    expect(invokeMock).toHaveBeenCalledWith("list_customer_motorcycles", {
+      input: { customerId: 13 },
+    });
+    expect(result).toEqual(motorcycles);
+    expectTypeOf(result).toEqualTypeOf<CustomerMotorcycleLookup[]>();
+  });
+
+  test("preserves customerNotFound across the typed lookup boundary", async () => {
+    // Arrange
+    invokeMock.mockRejectedValue({
+      category: "customerNotFound",
+      message: "The Customer was not found.",
+    });
+
+    // Act
+    const error = await listCustomerMotorcycles(999_999).catch(
+      (rejection: unknown) => rejection,
+    );
+
+    // Assert
+    expect(error).toBeInstanceOf(ServiceVisitCommandError);
+    expect(isServiceVisitCommandError(error)).toBe(true);
+    expect(error).toMatchObject({
+      category: "customerNotFound",
+      message: "The Customer was not found.",
+    });
   });
 
   test.each(["motorcycleNotFound", "activeServiceVisitExists"] as const)(

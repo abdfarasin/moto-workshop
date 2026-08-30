@@ -7,6 +7,7 @@ export type ServiceVisitStatus =
 export type ServiceVisitPartStatus = "ACTIVE" | "VOIDED";
 
 export type ServiceVisitCommandErrorCategory =
+  | "customerNotFound"
   | "motorcycleNotFound"
   | "activeServiceVisitExists"
   | "serviceVisitNotFound"
@@ -100,6 +101,33 @@ export interface CreateServiceVisitInput {
   customerComplaint: string;
   notes: string | null;
   createdAt: number;
+}
+
+export interface SearchCustomersInput {
+  query: string;
+  limit?: number;
+}
+
+export interface CustomerSummary {
+  id: number;
+  name: string;
+  phone: string;
+}
+
+export type ActiveServiceVisitStatus = "OPEN" | "READY_FOR_PICKUP";
+
+export interface CustomerMotorcycleLookup {
+  id: number;
+  makeName: string;
+  model: string;
+  year: number | null;
+  colorName: string;
+  plateCode: string | null;
+  plateNumber: number | null;
+  vin: string | null;
+  chassisNumber: string | null;
+  activeServiceVisitId: number | null;
+  activeServiceVisitStatus: ActiveServiceVisitStatus | null;
 }
 
 export interface UpdateServiceVisitWorkInput {

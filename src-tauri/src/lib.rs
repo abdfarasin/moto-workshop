@@ -5,6 +5,7 @@ pub mod domain;
 mod repositories;
 pub mod runtime;
 
+use commands::service_visit_lookup::{list_customer_motorcycles, search_customers};
 use commands::service_visit_workspace::{
     add_service_visit_part, cancel_service_visit, close_service_visit, create_service_visit,
     list_service_visit_inventory_items, load_service_visit_workspace,
@@ -25,6 +26,8 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            search_customers,
+            list_customer_motorcycles,
             create_service_visit,
             load_service_visit_workspace,
             list_service_visit_inventory_items,

@@ -1,2 +1,3 @@
 mod service_visit_creation_tests;
+mod service_visit_lookup_tests;
 mod service_visit_workspace_tests;
