@@ -6,7 +6,8 @@ This is the living overview of how the application is connected. It reflects the
 
 ```mermaid
 flowchart LR
-    UI[React + TypeScript UI] -.->|future invoke wrappers| COMMANDS[Tauri command DTO boundary]
+    UI[React + TypeScript UI] -.->|future workspace wiring| API[Feature-local typed invoke API]
+    API --> COMMANDS[Tauri command DTO boundary]
     SHELL[Tauri 2 shell] --> LIB[Rust library]
     LIB --> COMMANDS
     LIB --> RUNTIME[Runtime DB initialization + managed state]
@@ -38,6 +39,7 @@ flowchart LR
 ## Frontend
 
 - `src/main.tsx` mounts the React application.
+- `src/features/service/api/` owns the typed TypeScript contract and the five `invoke` wrappers for the existing Service Visit commands. It preserves known backend error categories and distinguishes non-contract transport failures.
 - Current workshop screens still use frontend preview data and do not invoke the new backend commands yet.
 - No persistence logic is embedded in React components.
 
@@ -187,11 +189,11 @@ Migration 7 rebuilds `stock_movements` transactionally, preserves every v6 row a
 - `src-tauri/tests/application/` uses isolated temporary SQLite databases to verify repository queries and complete Service Visit workspace use cases across the application/domain/schema boundaries.
 - `src-tauri/tests/command_tests.rs` exercises command handlers against real temporary schema-v7 databases, including runtime migration, camelCase DTO mapping, stable status/error serialization, safe add-Part input, and sanitized database failures.
 - Migration tests exercise the public migration runner and observable stopping points instead of private migration functions.
-- Frontend compilation is verified with `npm run build`; there are no feature-level frontend tests yet.
+- Frontend compilation is verified with `npm run build`; Vitest exercises the feature-local Service Visit API at the Tauri transport boundary.
 
 ## Current end-to-end limitation
 
-The Service Visit workspace now has production repositories, application orchestration, runtime database initialization, and registered Tauri commands. React invoke wrappers and replacement of frontend preview data remain deferred, so current screens do not call this boundary yet. ServiceVisit creation and lifecycle-transition commands also remain outside this slice.
+The Service Visit workspace now has production repositories, application orchestration, runtime database initialization, registered Tauri commands, and feature-local typed TypeScript invoke wrappers. Replacement of frontend preview data and React wiring remain deferred, so current screens do not call this boundary yet. ServiceVisit creation and lifecycle-transition commands also remain outside this slice.
 
 ## Deferred Invoice integration
 
