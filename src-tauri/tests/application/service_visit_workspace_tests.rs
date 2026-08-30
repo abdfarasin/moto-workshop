@@ -3,8 +3,9 @@ use tempfile::{tempdir, TempDir};
 
 use moto_workshop_lib::{
     application::service_visit_workspace::{
-        AddServiceVisitPartInput, ServiceVisitWorkspaceError, ServiceVisitWorkspaceService,
-        UpdateServiceVisitWorkInput, VoidServiceVisitPartInput,
+        AddServiceVisitPartInput, CancelServiceVisitInput, CloseServiceVisitInput,
+        MarkServiceVisitReadyForPickupInput, ReopenServiceVisitInput, ServiceVisitWorkspaceError,
+        ServiceVisitWorkspaceService, UpdateServiceVisitWorkInput, VoidServiceVisitPartInput,
     },
     db::{migrate_database, open_database},
     domain::{
@@ -71,6 +72,221 @@ fn loads_complete_workspace_with_active_and_voided_part_history() {
     assert_eq!(workspace.parts[1].status, ServiceVisitPartStatus::Voided);
     assert_eq!(workspace.parts[1].voided_at, Some(2_200));
     assert_eq!(workspace.parts[1].void_reason.as_deref(), Some("Wrong oil"));
+}
+
+#[test]
+fn lifecycle_ready_reopen_and_close_persist_refreshed_workspace_and_updated_at() {
+    // # Arrange
+    let mut fixture = fixture();
+    let visit_id = fixture.visit_id;
+    ServiceVisitWorkspaceService::new(&mut fixture.connection)
+        .update_work(UpdateServiceVisitWorkInput {
+            service_visit_id: visit_id,
+            diagnosis: Some("Worn seal".into()),
+            work_performed: Some("Replaced seal".into()),
+            labor_charge_fils: 12_500,
+            notes: None,
+            odometer_km: Some(18_510),
+            updated_at: 1_500,
+        })
+        .unwrap();
+
+    // # Act
+    let ready = ServiceVisitWorkspaceService::new(&mut fixture.connection)
+        .mark_ready_for_pickup(MarkServiceVisitReadyForPickupInput {
+            service_visit_id: visit_id,
+            completed_at: 2_000,
+            updated_at: 2_010,
+        })
+        .expect("open visit with work should become ready");
+    let reopened = ServiceVisitWorkspaceService::new(&mut fixture.connection)
+        .reopen(ReopenServiceVisitInput {
+            service_visit_id: visit_id,
+            updated_at: 2_020,
+        })
+        .expect("ready visit should reopen");
+    ServiceVisitWorkspaceService::new(&mut fixture.connection)
+        .mark_ready_for_pickup(MarkServiceVisitReadyForPickupInput {
+            service_visit_id: visit_id,
+            completed_at: 2_030,
+            updated_at: 2_040,
+        })
+        .unwrap();
+    let closed = ServiceVisitWorkspaceService::new(&mut fixture.connection)
+        .close(CloseServiceVisitInput {
+            service_visit_id: visit_id,
+            closed_at: 2_050,
+            updated_at: 2_060,
+        })
+        .expect("ready visit should close");
+
+    // # Assert
+    assert_eq!(ready.visit.status, ServiceVisitStatus::ReadyForPickup);
+    assert_eq!(ready.visit.completed_at, Some(2_000));
+    assert_eq!(ready.visit.updated_at, 2_010);
+    assert_eq!(reopened.visit.status, ServiceVisitStatus::Open);
+    assert_eq!(reopened.visit.completed_at, None);
+    assert_eq!(reopened.visit.updated_at, 2_020);
+    assert_eq!(closed.visit.status, ServiceVisitStatus::Closed);
+    assert_eq!(closed.visit.completed_at, Some(2_030));
+    assert_eq!(closed.visit.closed_at, Some(2_050));
+    assert_eq!(closed.visit.updated_at, 2_060);
+    let persisted = ServiceVisitWorkspaceService::new(&mut fixture.connection)
+        .load_workspace(visit_id)
+        .unwrap();
+    assert_eq!(persisted, closed);
+}
+
+#[test]
+fn lifecycle_validation_and_invalid_transitions_roll_back_authoritative_row() {
+    // # Arrange
+    let mut fixture = fixture();
+    let visit_id = fixture.visit_id;
+
+    // # Act
+    let missing_work = ServiceVisitWorkspaceService::new(&mut fixture.connection)
+        .mark_ready_for_pickup(MarkServiceVisitReadyForPickupInput {
+            service_visit_id: visit_id,
+            completed_at: 2_000,
+            updated_at: 2_010,
+        })
+        .expect_err("ready requires work performed");
+    ServiceVisitWorkspaceService::new(&mut fixture.connection)
+        .update_work(UpdateServiceVisitWorkInput {
+            service_visit_id: visit_id,
+            diagnosis: None,
+            work_performed: Some("Replaced seal".into()),
+            labor_charge_fils: 12_500,
+            notes: None,
+            odometer_km: Some(18_510),
+            updated_at: 2_020,
+        })
+        .unwrap();
+    ServiceVisitWorkspaceService::new(&mut fixture.connection)
+        .mark_ready_for_pickup(MarkServiceVisitReadyForPickupInput {
+            service_visit_id: visit_id,
+            completed_at: 2_100,
+            updated_at: 2_110,
+        })
+        .unwrap();
+    let early_close = ServiceVisitWorkspaceService::new(&mut fixture.connection)
+        .close(CloseServiceVisitInput {
+            service_visit_id: visit_id,
+            closed_at: 2_099,
+            updated_at: 2_120,
+        })
+        .expect_err("close cannot precede completion");
+    ServiceVisitWorkspaceService::new(&mut fixture.connection)
+        .reopen(ReopenServiceVisitInput {
+            service_visit_id: visit_id,
+            updated_at: 2_130,
+        })
+        .unwrap();
+    let invalid_close = ServiceVisitWorkspaceService::new(&mut fixture.connection)
+        .close(CloseServiceVisitInput {
+            service_visit_id: visit_id,
+            closed_at: 2_140,
+            updated_at: 2_150,
+        })
+        .expect_err("open visit cannot close directly");
+    let blank_cancel = ServiceVisitWorkspaceService::new(&mut fixture.connection)
+        .cancel(CancelServiceVisitInput {
+            service_visit_id: visit_id,
+            cancelled_at: 2_140,
+            reason: "   ".into(),
+            updated_at: 2_150,
+        })
+        .expect_err("blank cancellation reason must be rejected");
+
+    // # Assert
+    assert!(matches!(
+        missing_work,
+        ServiceVisitWorkspaceError::VisitValidation(
+            ServiceVisitValidationError::MissingWorkPerformed
+        )
+    ));
+    assert!(matches!(
+        early_close,
+        ServiceVisitWorkspaceError::VisitValidation(ServiceVisitValidationError::InvalidTimestamp)
+    ));
+    assert!(matches!(
+        invalid_close,
+        ServiceVisitWorkspaceError::VisitValidation(
+            ServiceVisitValidationError::InvalidTransition {
+                from: ServiceVisitStatus::Open,
+                to: ServiceVisitStatus::Closed,
+            }
+        )
+    ));
+    assert!(matches!(
+        blank_cancel,
+        ServiceVisitWorkspaceError::VisitValidation(
+            ServiceVisitValidationError::BlankCancellationReason
+        )
+    ));
+    let persisted: (String, Option<i64>, Option<i64>, Option<i64>, i64) = fixture
+        .connection
+        .query_row(
+            "SELECT status, completed_at, closed_at, cancelled_at, updated_at
+             FROM service_visits WHERE id = ?1",
+            [visit_id],
+            |row| {
+                Ok((
+                    row.get(0)?,
+                    row.get(1)?,
+                    row.get(2)?,
+                    row.get(3)?,
+                    row.get(4)?,
+                ))
+            },
+        )
+        .unwrap();
+    assert_eq!(persisted, ("OPEN".into(), None, None, None, 2_130));
+}
+
+#[test]
+fn cancel_normalizes_reason_persists_timestamp_and_remains_terminal() {
+    // # Arrange
+    let mut fixture = fixture();
+    let visit_id = fixture.visit_id;
+
+    // # Act
+    let cancelled = ServiceVisitWorkspaceService::new(&mut fixture.connection)
+        .cancel(CancelServiceVisitInput {
+            service_visit_id: visit_id,
+            cancelled_at: 2_000,
+            reason: "  Customer declined repair  ".into(),
+            updated_at: 2_010,
+        })
+        .expect("open visit should cancel");
+    let terminal_error = ServiceVisitWorkspaceService::new(&mut fixture.connection)
+        .reopen(ReopenServiceVisitInput {
+            service_visit_id: visit_id,
+            updated_at: 2_020,
+        })
+        .expect_err("cancelled visit must remain terminal");
+
+    // # Assert
+    assert_eq!(cancelled.visit.status, ServiceVisitStatus::Cancelled);
+    assert_eq!(cancelled.visit.cancelled_at, Some(2_000));
+    assert_eq!(
+        cancelled.visit.cancellation_reason.as_deref(),
+        Some("Customer declined repair")
+    );
+    assert_eq!(cancelled.visit.updated_at, 2_010);
+    assert!(matches!(
+        terminal_error,
+        ServiceVisitWorkspaceError::VisitValidation(
+            ServiceVisitValidationError::InvalidTransition {
+                from: ServiceVisitStatus::Cancelled,
+                to: ServiceVisitStatus::Open,
+            }
+        )
+    ));
+    let persisted = ServiceVisitWorkspaceService::new(&mut fixture.connection)
+        .load_workspace(visit_id)
+        .unwrap();
+    assert_eq!(persisted, cancelled);
 }
 
 #[test]

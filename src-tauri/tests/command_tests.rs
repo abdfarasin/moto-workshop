@@ -4,9 +4,13 @@ use tempfile::{tempdir, TempDir};
 
 use moto_workshop_lib::{
     commands::service_visit_workspace::{
-        handle_add_service_visit_part, handle_list_service_visit_inventory_items,
-        handle_load_service_visit_workspace, handle_update_service_visit_work,
-        handle_void_service_visit_part, AddServiceVisitPartCommandInput, CommandErrorCategory,
+        handle_add_service_visit_part, handle_cancel_service_visit, handle_close_service_visit,
+        handle_list_service_visit_inventory_items, handle_load_service_visit_workspace,
+        handle_mark_service_visit_ready_for_pickup, handle_reopen_service_visit,
+        handle_update_service_visit_work, handle_void_service_visit_part,
+        AddServiceVisitPartCommandInput, CancelServiceVisitCommandInput,
+        CloseServiceVisitCommandInput, CommandErrorCategory,
+        MarkServiceVisitReadyForPickupCommandInput, ReopenServiceVisitCommandInput,
         UpdateServiceVisitWorkCommandInput, VoidServiceVisitPartCommandInput,
     },
     db::open_database,
@@ -232,6 +236,158 @@ fn update_and_void_handlers_return_stable_error_categories_without_sql_details()
     );
     assert!(!update_error.message.to_ascii_lowercase().contains("sql"));
     assert!(!void_error.message.to_ascii_lowercase().contains("select"));
+}
+
+#[test]
+fn lifecycle_handlers_return_refreshed_camel_case_workspaces_and_stable_errors() {
+    // # Arrange
+    let ready_fixture = fixture();
+    handle_update_service_visit_work(
+        &ready_fixture.database,
+        UpdateServiceVisitWorkCommandInput {
+            service_visit_id: ready_fixture.visit_id,
+            diagnosis: None,
+            work_performed: Some("Replaced seal".into()),
+            labor_charge_fils: 12_500,
+            notes: None,
+            odometer_km: Some(18_510),
+            updated_at: 1_500,
+        },
+    )
+    .unwrap();
+
+    // # Act
+    let ready = handle_mark_service_visit_ready_for_pickup(
+        &ready_fixture.database,
+        MarkServiceVisitReadyForPickupCommandInput {
+            service_visit_id: ready_fixture.visit_id,
+            completed_at: 2_000,
+            updated_at: 2_010,
+        },
+    )
+    .unwrap();
+    let reopened = handle_reopen_service_visit(
+        &ready_fixture.database,
+        ReopenServiceVisitCommandInput {
+            service_visit_id: ready_fixture.visit_id,
+            updated_at: 2_020,
+        },
+    )
+    .unwrap();
+    handle_mark_service_visit_ready_for_pickup(
+        &ready_fixture.database,
+        MarkServiceVisitReadyForPickupCommandInput {
+            service_visit_id: ready_fixture.visit_id,
+            completed_at: 2_030,
+            updated_at: 2_040,
+        },
+    )
+    .unwrap();
+    let closed = handle_close_service_visit(
+        &ready_fixture.database,
+        CloseServiceVisitCommandInput {
+            service_visit_id: ready_fixture.visit_id,
+            closed_at: 2_050,
+            updated_at: 2_060,
+        },
+    )
+    .unwrap();
+    let cancel_fixture = fixture();
+    let cancelled = handle_cancel_service_visit(
+        &cancel_fixture.database,
+        CancelServiceVisitCommandInput {
+            service_visit_id: cancel_fixture.visit_id,
+            cancelled_at: 2_000,
+            reason: "  Customer declined repair  ".into(),
+            updated_at: 2_010,
+        },
+    )
+    .unwrap();
+    let lifecycle_error = handle_reopen_service_visit(
+        &cancel_fixture.database,
+        ReopenServiceVisitCommandInput {
+            service_visit_id: cancel_fixture.visit_id,
+            updated_at: 2_020,
+        },
+    )
+    .expect_err("cancelled visit cannot reopen");
+    let validation_fixture = fixture();
+    let validation_error = handle_mark_service_visit_ready_for_pickup(
+        &validation_fixture.database,
+        MarkServiceVisitReadyForPickupCommandInput {
+            service_visit_id: validation_fixture.visit_id,
+            completed_at: 2_000,
+            updated_at: 2_010,
+        },
+    )
+    .expect_err("missing work should remain a validation error");
+
+    // # Assert
+    let ready_json = serde_json::to_value(&ready).unwrap();
+    assert_eq!(ready_json["visit"]["status"], "READY_FOR_PICKUP");
+    assert_eq!(ready_json["visit"]["completedAt"], 2_000);
+    assert_eq!(ready_json["visit"]["updatedAt"], 2_010);
+    assert_eq!(
+        reopened.visit.status,
+        moto_workshop_lib::commands::service_visit_workspace::ServiceVisitStatusDto::Open
+    );
+    assert_eq!(reopened.visit.completed_at, None);
+    let closed_json = serde_json::to_value(&closed).unwrap();
+    assert_eq!(closed_json["visit"]["status"], "CLOSED");
+    assert_eq!(closed_json["visit"]["closedAt"], 2_050);
+    assert_eq!(closed_json["visit"]["updatedAt"], 2_060);
+    let cancelled_json = serde_json::to_value(&cancelled).unwrap();
+    assert_eq!(cancelled_json["visit"]["status"], "CANCELLED");
+    assert_eq!(cancelled_json["visit"]["cancelledAt"], 2_000);
+    assert_eq!(
+        cancelled_json["visit"]["cancellationReason"],
+        "Customer declined repair"
+    );
+    assert_eq!(
+        lifecycle_error.category,
+        CommandErrorCategory::LifecycleRejected
+    );
+    assert_eq!(
+        validation_error.category,
+        CommandErrorCategory::ValidationError
+    );
+    assert!(!lifecycle_error.message.to_ascii_lowercase().contains("sql"));
+}
+
+#[test]
+fn lifecycle_command_inputs_accept_exact_camel_case_shapes() {
+    // # Arrange
+    let mark_ready = json!({ "serviceVisitId": 1, "completedAt": 2, "updatedAt": 3 });
+    let reopen = json!({ "serviceVisitId": 1, "updatedAt": 4 });
+    let close = json!({ "serviceVisitId": 1, "closedAt": 5, "updatedAt": 6 });
+    let cancel = json!({
+        "serviceVisitId": 1,
+        "cancelledAt": 7,
+        "reason": "Customer declined",
+        "updatedAt": 8
+    });
+    let unsafe_cancel = json!({
+        "serviceVisitId": 1,
+        "cancelledAt": 7,
+        "reason": "Customer declined",
+        "updatedAt": 8,
+        "databasePath": "C:/caller-controlled.sqlite3"
+    });
+
+    // # Act
+    let mark_ready =
+        serde_json::from_value::<MarkServiceVisitReadyForPickupCommandInput>(mark_ready);
+    let reopen = serde_json::from_value::<ReopenServiceVisitCommandInput>(reopen);
+    let close = serde_json::from_value::<CloseServiceVisitCommandInput>(close);
+    let cancel = serde_json::from_value::<CancelServiceVisitCommandInput>(cancel);
+    let unsafe_cancel = serde_json::from_value::<CancelServiceVisitCommandInput>(unsafe_cancel);
+
+    // # Assert
+    assert_eq!(mark_ready.unwrap().completed_at, 2);
+    assert_eq!(reopen.unwrap().updated_at, 4);
+    assert_eq!(close.unwrap().closed_at, 5);
+    assert_eq!(cancel.unwrap().reason, "Customer declined");
+    assert!(unsafe_cancel.is_err());
 }
 
 #[test]

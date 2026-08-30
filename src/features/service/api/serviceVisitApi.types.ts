@@ -115,3 +115,27 @@ export interface VoidServiceVisitPartInput {
   voidedAt: number;
   reason: string | null;
 }
+
+export interface MarkServiceVisitReadyForPickupInput {
+  serviceVisitId: number;
+  completedAt: number;
+  updatedAt: number;
+}
+
+export interface ReopenServiceVisitInput {
+  serviceVisitId: number;
+  updatedAt: number;
+}
+
+export interface CloseServiceVisitInput {
+  serviceVisitId: number;
+  closedAt: number;
+  updatedAt: number;
+}
+
+export interface CancelServiceVisitInput {
+  serviceVisitId: number;
+  cancelledAt: number;
+  reason: string;
+  updatedAt: number;
+}

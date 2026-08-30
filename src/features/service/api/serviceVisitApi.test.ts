@@ -3,9 +3,13 @@ import { beforeEach, describe, expect, expectTypeOf, test, vi } from "vitest";
 
 import {
   addServiceVisitPart,
+  cancelServiceVisit,
+  closeServiceVisit,
   isServiceVisitCommandError,
   listServiceVisitInventoryItems,
   loadServiceVisitWorkspace,
+  markServiceVisitReadyForPickup,
+  reopenServiceVisit,
   ServiceVisitCommandError,
   UnexpectedServiceVisitApiError,
   updateServiceVisitWork,
@@ -13,10 +17,14 @@ import {
 } from "./serviceVisitApi";
 import type {
   AddServiceVisitPartInput,
+  CancelServiceVisitInput,
+  CloseServiceVisitInput,
   InventoryItemSelection,
   ServiceVisitPart,
   ServiceVisitStatus,
   ServiceVisitWorkspace,
+  MarkServiceVisitReadyForPickupInput,
+  ReopenServiceVisitInput,
   UpdateServiceVisitWorkInput,
   VoidServiceVisitPartInput,
 } from "./serviceVisitApi.types";
@@ -196,6 +204,54 @@ describe("Service Visit API", () => {
     expect(invokeMock).toHaveBeenCalledWith("void_service_visit_part", {
       input,
     });
+  });
+
+  test("invokes each lifecycle command with its exact Tauri input wrapper", async () => {
+    // Arrange
+    const markReadyInput: MarkServiceVisitReadyForPickupInput = {
+      serviceVisitId: 7,
+      completedAt: 1_500,
+      updatedAt: 1_510,
+    };
+    const reopenInput: ReopenServiceVisitInput = {
+      serviceVisitId: 7,
+      updatedAt: 1_520,
+    };
+    const closeInput: CloseServiceVisitInput = {
+      serviceVisitId: 7,
+      closedAt: 1_600,
+      updatedAt: 1_610,
+    };
+    const cancelInput: CancelServiceVisitInput = {
+      serviceVisitId: 7,
+      cancelledAt: 1_700,
+      reason: "Customer declined repair",
+      updatedAt: 1_710,
+    };
+    invokeMock.mockResolvedValue(workspace);
+
+    // Act
+    const ready = await markServiceVisitReadyForPickup(markReadyInput);
+    await reopenServiceVisit(reopenInput);
+    await closeServiceVisit(closeInput);
+    await cancelServiceVisit(cancelInput);
+
+    // Assert
+    expect(invokeMock).toHaveBeenNthCalledWith(
+      1,
+      "mark_service_visit_ready_for_pickup",
+      { input: markReadyInput },
+    );
+    expect(invokeMock).toHaveBeenNthCalledWith(2, "reopen_service_visit", {
+      input: reopenInput,
+    });
+    expect(invokeMock).toHaveBeenNthCalledWith(3, "close_service_visit", {
+      input: closeInput,
+    });
+    expect(invokeMock).toHaveBeenNthCalledWith(4, "cancel_service_visit", {
+      input: cancelInput,
+    });
+    expectTypeOf(ready).toEqualTypeOf<ServiceVisitWorkspace>();
   });
 
   test("preserves a typed backend command error's category and message", async () => {

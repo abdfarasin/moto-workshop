@@ -6,8 +6,10 @@ mod repositories;
 pub mod runtime;
 
 use commands::service_visit_workspace::{
-    add_service_visit_part, list_service_visit_inventory_items, load_service_visit_workspace,
-    update_service_visit_work, void_service_visit_part,
+    add_service_visit_part, cancel_service_visit, close_service_visit,
+    list_service_visit_inventory_items, load_service_visit_workspace,
+    mark_service_visit_ready_for_pickup, reopen_service_visit, update_service_visit_work,
+    void_service_visit_part,
 };
 use runtime::database::RuntimeDatabase;
 use tauri::Manager;
@@ -28,6 +30,10 @@ pub fn run() {
             update_service_visit_work,
             add_service_visit_part,
             void_service_visit_part,
+            mark_service_visit_ready_for_pickup,
+            reopen_service_visit,
+            close_service_visit,
+            cancel_service_visit,
         ])
         .run(tauri::generate_context!())
         .unwrap_or_else(|error| panic!("Moto Workshop startup failed: {error}"));

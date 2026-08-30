@@ -39,7 +39,7 @@ flowchart LR
 ## Frontend
 
 - `src/main.tsx` mounts the React application.
-- `src/features/service/api/` owns the typed TypeScript contract and the five `invoke` wrappers for the existing Service Visit commands. It preserves known backend error categories and distinguishes non-contract transport failures.
+- `src/features/service/api/` owns the typed TypeScript contract and the nine `invoke` wrappers for the existing Service Visit workspace and lifecycle commands. It preserves known backend error categories and distinguishes non-contract transport failures.
 - Current workshop screens still use frontend preview data and do not invoke the new backend commands yet.
 - No persistence logic is embedded in React components.
 
@@ -52,7 +52,7 @@ flowchart LR
 - The rusqlite connection is held in Tauri managed state behind a standard `Mutex`; each synchronous command locks it only for its application-service call.
 - Startup path resolution, directory creation, database opening, and migration errors abort startup with a clear failure rather than continuing with an invalid database.
 - The template `greet` command has been removed.
-- Exactly five Service Visit commands are registered: `load_service_visit_workspace`, `list_service_visit_inventory_items`, `update_service_visit_work`, `add_service_visit_part`, and `void_service_visit_part`.
+- Nine Service Visit commands are registered: `load_service_visit_workspace`, `list_service_visit_inventory_items`, `update_service_visit_work`, `add_service_visit_part`, `void_service_visit_part`, `mark_service_visit_ready_for_pickup`, `reopen_service_visit`, `close_service_visit`, and `cancel_service_visit`.
 
 ### Service Visit command boundary
 
@@ -61,6 +61,8 @@ flowchart LR
 Service Visit statuses serialize exactly as `OPEN`, `READY_FOR_PICKUP`, `CLOSED`, and `CANCELLED`. Part statuses serialize as `ACTIVE` and `VOIDED`; neither contract depends on Rust Debug formatting. Error categories serialize in camelCase: `serviceVisitNotFound`, `inventoryItemNotFound`, `serviceVisitPartNotFound`, `lifecycleRejected`, `validationError`, and `databaseError`. Database messages deliberately omit raw SQL and SQLite details.
 
 The add-Part command accepts only Visit ID, Item ID, scaled quantity, charged unit price, and creation timestamp. Snapshot Item name, Unit name, quantity scale, and line total remain Rust/application responsibilities. Command inputs deny unknown fields, so caller-supplied database paths or forged snapshot fields are rejected during deserialization.
+
+The four lifecycle commands accept only the Visit ID, their transition timestamp when applicable, an explicit `updatedAt`, and the cancellation reason only for cancellation. Each returns the refreshed complete workspace. Invalid domain transitions map to the existing `lifecycleRejected` category, while missing work, invalid chronology, and invalid cancellation reasons remain `validationError` failures.
 
 ## Rust library boundaries
 
@@ -131,7 +133,7 @@ Stock Movement instances expose no mutation behavior. Persistence supplies the p
 
 ### Service Visit workspace repositories
 
-`repositories/service_visit.rs` loads the complete Service Visit workspace header and historical Part rows, and owns the focused INSERT/UPDATE statements for work fields and Part mutations. `repositories/inventory.rs` loads selectable non-archived Inventory Items joined to active Unit metadata and derives each Item's scaled integer `currentQuantity` in the same query by summing its immutable Stock Movements. Zero-history Items return zero, and negative totals remain unchanged. Both repositories remain persistence-focused and return owned rows; they do not normalize business input or decide lifecycle policy.
+`repositories/service_visit.rs` loads the complete Service Visit workspace header and historical Part rows, and owns focused INSERT/UPDATE statements for work fields, complete domain-produced lifecycle fields, and Part mutations. It does not decide which lifecycle transitions are allowed. `repositories/inventory.rs` loads selectable non-archived Inventory Items joined to active Unit metadata and derives each Item's scaled integer `currentQuantity` in the same query by summing its immutable Stock Movements. Zero-history Items return zero, and negative totals remain unchanged. Both repositories remain persistence-focused and return owned rows; they do not normalize business input or decide lifecycle policy.
 
 ### Service Visit workspace application service
 
@@ -139,6 +141,8 @@ Stock Movement instances expose no mutation behavior. Persistence supplies the p
 
 - loads a Service Visit with its owner snapshot, Motorcycle presentation data, and ACTIVE/VOIDED Part history;
 - validates mutable work-field updates through the existing ServiceVisit domain lifecycle;
+- restores the authoritative persisted aggregate and delegates ready, reopen, close, and cancel transitions to the existing ServiceVisit domain methods;
+- persists every resulting lifecycle field plus caller-supplied `updatedAt` in the same transaction and returns the refreshed complete workspace;
 - lists usable Inventory Items with current Unit name, scale, suggested selling price, and ledger-derived scaled integer current quantity;
 - accepts only Item/Visit IDs, scaled quantity, charged price, and caller-supplied timestamps when adding a Part;
 - loads Item and Unit snapshot metadata inside the transaction, constructs the ServiceVisitPart domain object, and persists its authoritative integer line total;
@@ -187,13 +191,13 @@ Migration 7 rebuilds `stock_movements` transactionally, preserves every v6 row a
 - `src-tauri/tests/domain/` tests pure domain behavior and uses `proptest` for input-safety properties.
 - `src-tauri/tests/database/` uses isolated temporary SQLite databases for connection, migration, catalog, Customer, Motorcycle, ServiceVisit, Invoice, Inventory, and stock-ledger integration behavior.
 - `src-tauri/tests/application/` uses isolated temporary SQLite databases to verify repository queries and complete Service Visit workspace use cases across the application/domain/schema boundaries.
-- `src-tauri/tests/command_tests.rs` exercises command handlers against real temporary schema-v7 databases, including runtime migration, camelCase DTO mapping, stable status/error serialization, safe add-Part input, and sanitized database failures.
+- `src-tauri/tests/command_tests.rs` exercises command handlers against real temporary schema-v7 databases, including runtime migration, camelCase DTO mapping, lifecycle orchestration, stable status/error serialization, safe inputs, and sanitized database failures.
 - Migration tests exercise the public migration runner and observable stopping points instead of private migration functions.
 - Frontend compilation is verified with `npm run build`; Vitest exercises the feature-local Service Visit API at the Tauri transport boundary.
 
 ## Current end-to-end limitation
 
-The Service Visit workspace now has production repositories, application orchestration, runtime database initialization, registered Tauri commands, and feature-local typed TypeScript invoke wrappers. Replacement of frontend preview data and React wiring remain deferred, so current screens do not call this boundary yet. ServiceVisit creation and lifecycle-transition commands also remain outside this slice.
+The Service Visit workspace now has production repositories, application orchestration for work, Parts, and the existing lifecycle transitions, runtime database initialization, registered Tauri commands, and feature-local typed TypeScript invoke wrappers. Replacement of frontend preview data and React wiring remain deferred, so current screens do not call this boundary yet. ServiceVisit creation remains outside this slice.
 
 ## Deferred Invoice integration
 

@@ -81,6 +81,15 @@ pub(crate) struct ServiceVisitWorkFields<'value> {
     pub updated_at: i64,
 }
 
+pub(crate) struct ServiceVisitLifecycleFields<'value> {
+    pub status: ServiceVisitStatus,
+    pub completed_at: Option<i64>,
+    pub closed_at: Option<i64>,
+    pub cancelled_at: Option<i64>,
+    pub cancellation_reason: Option<&'value str>,
+    pub updated_at: i64,
+}
+
 pub(crate) struct ServiceVisitRepository<'connection> {
     connection: &'connection Connection,
 }
@@ -205,6 +214,39 @@ impl<'connection> ServiceVisitRepository<'connection> {
                 fields.labor_charge_fils,
                 fields.notes,
                 fields.odometer_km,
+                fields.updated_at,
+                service_visit_id,
+            ],
+        )?;
+        if changed == 1 {
+            Ok(())
+        } else {
+            Err(rusqlite::Error::QueryReturnedNoRows)
+        }
+    }
+
+    pub fn update_lifecycle(
+        &self,
+        service_visit_id: i64,
+        fields: ServiceVisitLifecycleFields<'_>,
+    ) -> rusqlite::Result<()> {
+        let status = match fields.status {
+            ServiceVisitStatus::Open => "OPEN",
+            ServiceVisitStatus::ReadyForPickup => "READY_FOR_PICKUP",
+            ServiceVisitStatus::Closed => "CLOSED",
+            ServiceVisitStatus::Cancelled => "CANCELLED",
+        };
+        let changed = self.connection.execute(
+            "UPDATE service_visits
+             SET status = ?1, completed_at = ?2, closed_at = ?3,
+                 cancelled_at = ?4, cancellation_reason = ?5, updated_at = ?6
+             WHERE id = ?7",
+            params![
+                status,
+                fields.completed_at,
+                fields.closed_at,
+                fields.cancelled_at,
+                fields.cancellation_reason,
                 fields.updated_at,
                 service_visit_id,
             ],

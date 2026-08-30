@@ -2,12 +2,16 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     application::service_visit_workspace::{
-        AddServiceVisitPartInput, InventoryItemSelection, ServiceVisitDetails,
-        ServiceVisitMotorcycle, ServiceVisitOwner, ServiceVisitPartHistoryLine,
-        ServiceVisitWorkspace, ServiceVisitWorkspaceError, ServiceVisitWorkspaceService,
-        UpdateServiceVisitWorkInput, VoidServiceVisitPartInput,
+        AddServiceVisitPartInput, CancelServiceVisitInput, CloseServiceVisitInput,
+        InventoryItemSelection, MarkServiceVisitReadyForPickupInput, ReopenServiceVisitInput,
+        ServiceVisitDetails, ServiceVisitMotorcycle, ServiceVisitOwner,
+        ServiceVisitPartHistoryLine, ServiceVisitWorkspace, ServiceVisitWorkspaceError,
+        ServiceVisitWorkspaceService, UpdateServiceVisitWorkInput, VoidServiceVisitPartInput,
     },
-    domain::{service_visit::ServiceVisitStatus, service_visit_part::ServiceVisitPartStatus},
+    domain::{
+        service_visit::{ServiceVisitStatus, ServiceVisitValidationError},
+        service_visit_part::ServiceVisitPartStatus,
+    },
     runtime::database::RuntimeDatabase,
 };
 
@@ -144,6 +148,38 @@ pub struct VoidServiceVisitPartCommandInput {
     pub reason: Option<String>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct MarkServiceVisitReadyForPickupCommandInput {
+    pub service_visit_id: i64,
+    pub completed_at: i64,
+    pub updated_at: i64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ReopenServiceVisitCommandInput {
+    pub service_visit_id: i64,
+    pub updated_at: i64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct CloseServiceVisitCommandInput {
+    pub service_visit_id: i64,
+    pub closed_at: i64,
+    pub updated_at: i64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct CancelServiceVisitCommandInput {
+    pub service_visit_id: i64,
+    pub cancelled_at: i64,
+    pub reason: String,
+    pub updated_at: i64,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CommandError {
@@ -199,6 +235,38 @@ pub fn void_service_visit_part(
     input: VoidServiceVisitPartCommandInput,
 ) -> CommandResult<ServiceVisitPartDto> {
     handle_void_service_visit_part(&database, input)
+}
+
+#[tauri::command]
+pub fn mark_service_visit_ready_for_pickup(
+    database: tauri::State<'_, RuntimeDatabase>,
+    input: MarkServiceVisitReadyForPickupCommandInput,
+) -> CommandResult<ServiceVisitWorkspaceDto> {
+    handle_mark_service_visit_ready_for_pickup(&database, input)
+}
+
+#[tauri::command]
+pub fn reopen_service_visit(
+    database: tauri::State<'_, RuntimeDatabase>,
+    input: ReopenServiceVisitCommandInput,
+) -> CommandResult<ServiceVisitWorkspaceDto> {
+    handle_reopen_service_visit(&database, input)
+}
+
+#[tauri::command]
+pub fn close_service_visit(
+    database: tauri::State<'_, RuntimeDatabase>,
+    input: CloseServiceVisitCommandInput,
+) -> CommandResult<ServiceVisitWorkspaceDto> {
+    handle_close_service_visit(&database, input)
+}
+
+#[tauri::command]
+pub fn cancel_service_visit(
+    database: tauri::State<'_, RuntimeDatabase>,
+    input: CancelServiceVisitCommandInput,
+) -> CommandResult<ServiceVisitWorkspaceDto> {
+    handle_cancel_service_visit(&database, input)
 }
 
 pub fn handle_load_service_visit_workspace(
@@ -257,6 +325,50 @@ pub fn handle_void_service_visit_part(
     result.map(Into::into).map_err(Into::into)
 }
 
+pub fn handle_mark_service_visit_ready_for_pickup(
+    database: &RuntimeDatabase,
+    input: MarkServiceVisitReadyForPickupCommandInput,
+) -> CommandResult<ServiceVisitWorkspaceDto> {
+    let result = {
+        let mut connection = database.lock().map_err(|_| CommandError::database())?;
+        ServiceVisitWorkspaceService::new(&mut connection).mark_ready_for_pickup(input.into())
+    };
+    result.map(Into::into).map_err(Into::into)
+}
+
+pub fn handle_reopen_service_visit(
+    database: &RuntimeDatabase,
+    input: ReopenServiceVisitCommandInput,
+) -> CommandResult<ServiceVisitWorkspaceDto> {
+    let result = {
+        let mut connection = database.lock().map_err(|_| CommandError::database())?;
+        ServiceVisitWorkspaceService::new(&mut connection).reopen(input.into())
+    };
+    result.map(Into::into).map_err(Into::into)
+}
+
+pub fn handle_close_service_visit(
+    database: &RuntimeDatabase,
+    input: CloseServiceVisitCommandInput,
+) -> CommandResult<ServiceVisitWorkspaceDto> {
+    let result = {
+        let mut connection = database.lock().map_err(|_| CommandError::database())?;
+        ServiceVisitWorkspaceService::new(&mut connection).close(input.into())
+    };
+    result.map(Into::into).map_err(Into::into)
+}
+
+pub fn handle_cancel_service_visit(
+    database: &RuntimeDatabase,
+    input: CancelServiceVisitCommandInput,
+) -> CommandResult<ServiceVisitWorkspaceDto> {
+    let result = {
+        let mut connection = database.lock().map_err(|_| CommandError::database())?;
+        ServiceVisitWorkspaceService::new(&mut connection).cancel(input.into())
+    };
+    result.map(Into::into).map_err(Into::into)
+}
+
 impl CommandError {
     fn database() -> Self {
         Self {
@@ -289,6 +401,13 @@ impl From<ServiceVisitWorkspaceError> for CommandError {
             ServiceVisitWorkspaceError::VisitDoesNotAllowPartChanges(_) => Self {
                 category: CommandErrorCategory::LifecycleRejected,
                 message: "The Service Visit status does not allow Part changes.".into(),
+            },
+            ServiceVisitWorkspaceError::VisitValidation(
+                ServiceVisitValidationError::InvalidTransition { .. }
+                | ServiceVisitValidationError::TerminalVisitCannotBeEdited,
+            ) => Self {
+                category: CommandErrorCategory::LifecycleRejected,
+                message: "The Service Visit lifecycle transition is not allowed.".into(),
             },
             ServiceVisitWorkspaceError::VisitValidation(_)
             | ServiceVisitWorkspaceError::PartValidation(_) => Self {
@@ -449,6 +568,46 @@ impl From<VoidServiceVisitPartCommandInput> for VoidServiceVisitPartInput {
             service_visit_part_id: input.service_visit_part_id,
             voided_at: input.voided_at,
             reason: input.reason,
+        }
+    }
+}
+
+impl From<MarkServiceVisitReadyForPickupCommandInput> for MarkServiceVisitReadyForPickupInput {
+    fn from(input: MarkServiceVisitReadyForPickupCommandInput) -> Self {
+        Self {
+            service_visit_id: input.service_visit_id,
+            completed_at: input.completed_at,
+            updated_at: input.updated_at,
+        }
+    }
+}
+
+impl From<ReopenServiceVisitCommandInput> for ReopenServiceVisitInput {
+    fn from(input: ReopenServiceVisitCommandInput) -> Self {
+        Self {
+            service_visit_id: input.service_visit_id,
+            updated_at: input.updated_at,
+        }
+    }
+}
+
+impl From<CloseServiceVisitCommandInput> for CloseServiceVisitInput {
+    fn from(input: CloseServiceVisitCommandInput) -> Self {
+        Self {
+            service_visit_id: input.service_visit_id,
+            closed_at: input.closed_at,
+            updated_at: input.updated_at,
+        }
+    }
+}
+
+impl From<CancelServiceVisitCommandInput> for CancelServiceVisitInput {
+    fn from(input: CancelServiceVisitCommandInput) -> Self {
+        Self {
+            service_visit_id: input.service_visit_id,
+            cancelled_at: input.cancelled_at,
+            reason: input.reason,
+            updated_at: input.updated_at,
         }
     }
 }

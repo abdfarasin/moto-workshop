@@ -2,7 +2,11 @@ import { invoke } from "@tauri-apps/api/core";
 
 import type {
   AddServiceVisitPartInput,
+  CancelServiceVisitInput,
+  CloseServiceVisitInput,
   InventoryItemSelection,
+  MarkServiceVisitReadyForPickupInput,
+  ReopenServiceVisitInput,
   ServiceVisitCommandErrorCategory,
   ServiceVisitCommandErrorPayload,
   ServiceVisitPart,
@@ -124,9 +128,48 @@ export function voidServiceVisitPart(
   );
 }
 
+export function markServiceVisitReadyForPickup(
+  input: MarkServiceVisitReadyForPickupInput,
+): Promise<ServiceVisitWorkspace> {
+  return invokeServiceVisitCommand<ServiceVisitWorkspace>(
+    "mark_service_visit_ready_for_pickup",
+    { input },
+  );
+}
+
+export function reopenServiceVisit(
+  input: ReopenServiceVisitInput,
+): Promise<ServiceVisitWorkspace> {
+  return invokeServiceVisitCommand<ServiceVisitWorkspace>(
+    "reopen_service_visit",
+    { input },
+  );
+}
+
+export function closeServiceVisit(
+  input: CloseServiceVisitInput,
+): Promise<ServiceVisitWorkspace> {
+  return invokeServiceVisitCommand<ServiceVisitWorkspace>("close_service_visit", {
+    input,
+  });
+}
+
+export function cancelServiceVisit(
+  input: CancelServiceVisitInput,
+): Promise<ServiceVisitWorkspace> {
+  return invokeServiceVisitCommand<ServiceVisitWorkspace>(
+    "cancel_service_visit",
+    { input },
+  );
+}
+
 export type {
   AddServiceVisitPartInput,
+  CancelServiceVisitInput,
+  CloseServiceVisitInput,
   InventoryItemSelection,
+  MarkServiceVisitReadyForPickupInput,
+  ReopenServiceVisitInput,
   ServiceVisitCommandErrorCategory,
   ServiceVisitCommandErrorPayload,
   ServiceVisitDetails,

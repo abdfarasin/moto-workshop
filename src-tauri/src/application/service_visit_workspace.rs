@@ -16,8 +16,8 @@ use crate::{
     repositories::{
         inventory::{InventoryItemRow, InventoryRepository},
         service_visit::{
-            MotorcycleRow, OwnerRow, ServiceVisitPartRow, ServiceVisitRepository, ServiceVisitRow,
-            ServiceVisitWorkFields,
+            MotorcycleRow, OwnerRow, ServiceVisitLifecycleFields, ServiceVisitPartRow,
+            ServiceVisitRepository, ServiceVisitRow, ServiceVisitWorkFields,
         },
     },
 };
@@ -126,6 +126,34 @@ pub struct VoidServiceVisitPartInput {
     pub service_visit_part_id: i64,
     pub voided_at: i64,
     pub reason: Option<String>,
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub struct MarkServiceVisitReadyForPickupInput {
+    pub service_visit_id: i64,
+    pub completed_at: i64,
+    pub updated_at: i64,
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub struct ReopenServiceVisitInput {
+    pub service_visit_id: i64,
+    pub updated_at: i64,
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub struct CloseServiceVisitInput {
+    pub service_visit_id: i64,
+    pub closed_at: i64,
+    pub updated_at: i64,
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub struct CancelServiceVisitInput {
+    pub service_visit_id: i64,
+    pub cancelled_at: i64,
+    pub reason: String,
+    pub updated_at: i64,
 }
 
 #[derive(Debug)]
@@ -253,6 +281,76 @@ impl<'connection> ServiceVisitWorkspaceService<'connection> {
             },
         )?;
         let workspace = load_workspace(&transaction, input.service_visit_id)?;
+        transaction.commit()?;
+        Ok(workspace)
+    }
+
+    pub fn mark_ready_for_pickup(
+        &mut self,
+        input: MarkServiceVisitReadyForPickupInput,
+    ) -> Result<ServiceVisitWorkspace, ServiceVisitWorkspaceError> {
+        self.transition_lifecycle(input.service_visit_id, input.updated_at, |visit| {
+            visit.mark_ready_for_pickup(input.completed_at)
+        })
+    }
+
+    pub fn reopen(
+        &mut self,
+        input: ReopenServiceVisitInput,
+    ) -> Result<ServiceVisitWorkspace, ServiceVisitWorkspaceError> {
+        self.transition_lifecycle(
+            input.service_visit_id,
+            input.updated_at,
+            ServiceVisit::reopen,
+        )
+    }
+
+    pub fn close(
+        &mut self,
+        input: CloseServiceVisitInput,
+    ) -> Result<ServiceVisitWorkspace, ServiceVisitWorkspaceError> {
+        self.transition_lifecycle(input.service_visit_id, input.updated_at, |visit| {
+            visit.close(input.closed_at)
+        })
+    }
+
+    pub fn cancel(
+        &mut self,
+        input: CancelServiceVisitInput,
+    ) -> Result<ServiceVisitWorkspace, ServiceVisitWorkspaceError> {
+        self.transition_lifecycle(input.service_visit_id, input.updated_at, |visit| {
+            visit.cancel(input.cancelled_at, input.reason)
+        })
+    }
+
+    fn transition_lifecycle(
+        &mut self,
+        service_visit_id: i64,
+        updated_at: i64,
+        transition: impl FnOnce(&mut ServiceVisit) -> Result<(), ServiceVisitValidationError>,
+    ) -> Result<ServiceVisitWorkspace, ServiceVisitWorkspaceError> {
+        if updated_at < 0 {
+            return Err(ServiceVisitValidationError::InvalidTimestamp.into());
+        }
+        let transaction = self.connection.transaction()?;
+        let repository = ServiceVisitRepository::new(&transaction);
+        let header = repository.find_workspace_header(service_visit_id)?.ok_or(
+            ServiceVisitWorkspaceError::ServiceVisitNotFound(service_visit_id),
+        )?;
+        let mut visit = restore_visit(&header.visit)?;
+        transition(&mut visit)?;
+        repository.update_lifecycle(
+            service_visit_id,
+            ServiceVisitLifecycleFields {
+                status: visit.status(),
+                completed_at: visit.completed_at(),
+                closed_at: visit.closed_at(),
+                cancelled_at: visit.cancelled_at(),
+                cancellation_reason: visit.cancellation_reason(),
+                updated_at,
+            },
+        )?;
+        let workspace = load_workspace(&transaction, service_visit_id)?;
         transaction.commit()?;
         Ok(workspace)
     }
