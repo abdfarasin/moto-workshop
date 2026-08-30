@@ -202,6 +202,7 @@ pub struct CommandError {
 #[serde(rename_all = "camelCase")]
 pub enum CommandErrorCategory {
     CustomerNotFound,
+    CustomerPhoneAlreadyExists,
     MotorcycleNotFound,
     ActiveServiceVisitExists,
     ServiceVisitNotFound,

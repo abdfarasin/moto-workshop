@@ -5,11 +5,13 @@ import {
   addServiceVisitPart,
   cancelServiceVisit,
   closeServiceVisit,
+  createCustomer,
   createServiceVisit,
   isServiceVisitCommandError,
   listCustomerMotorcycles,
   listServiceVisitInventoryItems,
   loadServiceVisitWorkspace,
+  loadMotorcycleRegistrationReferenceData,
   markServiceVisitReadyForPickup,
   reopenServiceVisit,
   ServiceVisitCommandError,
@@ -22,10 +24,12 @@ import type {
   AddServiceVisitPartInput,
   CancelServiceVisitInput,
   CloseServiceVisitInput,
+  CreateCustomerInput,
   CreateServiceVisitInput,
   InventoryItemSelection,
   CustomerMotorcycleLookup,
   CustomerSummary,
+  MotorcycleRegistrationReferenceData,
   ServiceVisitPart,
   ServiceVisitStatus,
   ServiceVisitWorkspace,
@@ -278,6 +282,77 @@ describe("Service Visit API", () => {
     // Assert
     expect(invokeMock).toHaveBeenCalledWith("create_service_visit", { input });
     expectTypeOf(result).toEqualTypeOf<ServiceVisitWorkspace>();
+  });
+
+  test("creates a Customer with exactly the Tauri input wrapper", async () => {
+    // Arrange
+    const input: CreateCustomerInput = {
+      name: "Ahmad Ali",
+      phone: "0791234567",
+      notes: null,
+      createdAt: 1_234,
+    };
+    const customer: CustomerSummary = {
+      id: 13,
+      name: "Ahmad Ali",
+      phone: "+962791234567",
+    };
+    invokeMock.mockResolvedValue(customer);
+
+    // Act
+    const result = await createCustomer(input);
+
+    // Assert
+    expect(invokeMock).toHaveBeenCalledWith("create_customer", { input });
+    expect(result).toEqual(customer);
+    expectTypeOf(result).toEqualTypeOf<CustomerSummary>();
+  });
+
+  test("preserves customerPhoneAlreadyExists across Customer creation", async () => {
+    // Arrange
+    const input: CreateCustomerInput = {
+      name: "Duplicate",
+      phone: "00962791234567",
+      notes: null,
+      createdAt: 2_000,
+    };
+    invokeMock.mockRejectedValue({
+      category: "customerPhoneAlreadyExists",
+      message: "A Customer with this phone number already exists.",
+    });
+
+    // Act
+    const error = await createCustomer(input).catch(
+      (rejection: unknown) => rejection,
+    );
+
+    // Assert
+    expect(error).toBeInstanceOf(ServiceVisitCommandError);
+    expect(isServiceVisitCommandError(error)).toBe(true);
+    expect(error).toMatchObject({
+      category: "customerPhoneAlreadyExists",
+      message: "A Customer with this phone number already exists.",
+    });
+  });
+
+  test("loads Motorcycle registration reference data without command arguments", async () => {
+    // Arrange
+    const referenceData: MotorcycleRegistrationReferenceData = {
+      makes: [{ id: 1, name: "Honda" }],
+      colors: [{ id: 2, name: "Black" }],
+      plateCodes: [{ id: 3, code: "29" }],
+    };
+    invokeMock.mockResolvedValue(referenceData);
+
+    // Act
+    const result = await loadMotorcycleRegistrationReferenceData();
+
+    // Assert
+    expect(invokeMock).toHaveBeenCalledWith(
+      "load_motorcycle_registration_reference_data",
+    );
+    expect(result).toEqual(referenceData);
+    expectTypeOf(result).toEqualTypeOf<MotorcycleRegistrationReferenceData>();
   });
 
   test("searches Customers with the exact lookup command and input wrapper", async () => {

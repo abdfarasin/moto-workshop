@@ -4,11 +4,13 @@ import type {
   AddServiceVisitPartInput,
   CancelServiceVisitInput,
   CloseServiceVisitInput,
+  CreateCustomerInput,
   CreateServiceVisitInput,
   CustomerMotorcycleLookup,
   CustomerSummary,
   InventoryItemSelection,
   MarkServiceVisitReadyForPickupInput,
+  MotorcycleRegistrationReferenceData,
   ReopenServiceVisitInput,
   SearchCustomersInput,
   ServiceVisitCommandErrorCategory,
@@ -21,6 +23,7 @@ import type {
 
 const commandErrorCategories: readonly ServiceVisitCommandErrorCategory[] = [
   "customerNotFound",
+  "customerPhoneAlreadyExists",
   "motorcycleNotFound",
   "activeServiceVisitExists",
   "serviceVisitNotFound",
@@ -107,6 +110,18 @@ export function createServiceVisit(
   return invokeServiceVisitCommand<ServiceVisitWorkspace>("create_service_visit", {
     input,
   });
+}
+
+export function createCustomer(
+  input: CreateCustomerInput,
+): Promise<CustomerSummary> {
+  return invokeServiceVisitCommand<CustomerSummary>("create_customer", { input });
+}
+
+export function loadMotorcycleRegistrationReferenceData(): Promise<MotorcycleRegistrationReferenceData> {
+  return invokeServiceVisitCommand<MotorcycleRegistrationReferenceData>(
+    "load_motorcycle_registration_reference_data",
+  );
 }
 
 export function searchCustomers(
@@ -200,11 +215,16 @@ export type {
   AddServiceVisitPartInput,
   CancelServiceVisitInput,
   CloseServiceVisitInput,
+  CreateCustomerInput,
   CreateServiceVisitInput,
   CustomerMotorcycleLookup,
   CustomerSummary,
   InventoryItemSelection,
   MarkServiceVisitReadyForPickupInput,
+  JordanPlateCodeReference,
+  MotorcycleColorReference,
+  MotorcycleMakeReference,
+  MotorcycleRegistrationReferenceData,
   ReopenServiceVisitInput,
   SearchCustomersInput,
   ServiceVisitCommandErrorCategory,

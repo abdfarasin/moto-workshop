@@ -1,3 +1,5 @@
+mod customer_creation_tests;
+mod motorcycle_registration_reference_tests;
 mod service_visit_creation_tests;
 mod service_visit_lookup_tests;
 mod service_visit_workspace_tests;
