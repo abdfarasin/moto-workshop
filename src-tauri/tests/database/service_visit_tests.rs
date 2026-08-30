@@ -126,31 +126,31 @@ fn owner_snapshot_survives_later_motorcycle_ownership_change() {
 #[test]
 fn one_active_visit_per_motorcycle_allows_unlimited_inactive_history() {
     // # Arrange
-    let fixture = fixture();
+    let test_fixture = fixture();
     insert_open_visit(
-        &fixture.connection,
-        fixture.motorcycle_id,
-        fixture.owner_id,
+        &test_fixture.connection,
+        test_fixture.motorcycle_id,
+        test_fixture.owner_id,
         "First",
         None,
         0_i64,
         1_000,
     )
     .expect("first open visit should be inserted");
-    let first_id = fixture.connection.last_insert_rowid();
+    let first_id = test_fixture.connection.last_insert_rowid();
 
     // # Act / # Assert
     assert!(insert_open_visit(
-        &fixture.connection,
-        fixture.motorcycle_id,
-        fixture.owner_id,
+        &test_fixture.connection,
+        test_fixture.motorcycle_id,
+        test_fixture.owner_id,
         "Second",
         None,
         0_i64,
         2_000,
     )
     .is_err());
-    fixture
+    test_fixture
         .connection
         .execute(
             "UPDATE service_visits
@@ -161,16 +161,16 @@ fn one_active_visit_per_motorcycle_allows_unlimited_inactive_history() {
         )
         .expect("open visit should become ready");
     assert!(insert_open_visit(
-        &fixture.connection,
-        fixture.motorcycle_id,
-        fixture.owner_id,
+        &test_fixture.connection,
+        test_fixture.motorcycle_id,
+        test_fixture.owner_id,
         "Still blocked",
         None,
         0_i64,
         2_000,
     )
     .is_err());
-    fixture
+    test_fixture
         .connection
         .execute(
             "UPDATE service_visits
@@ -180,17 +180,17 @@ fn one_active_visit_per_motorcycle_allows_unlimited_inactive_history() {
         )
         .expect("ready visit should close");
     insert_open_visit(
-        &fixture.connection,
-        fixture.motorcycle_id,
-        fixture.owner_id,
+        &test_fixture.connection,
+        test_fixture.motorcycle_id,
+        test_fixture.owner_id,
         "After close",
         None,
         0_i64,
         2_000,
     )
     .expect("new visit should open after close");
-    let second_id = fixture.connection.last_insert_rowid();
-    fixture
+    let second_id = test_fixture.connection.last_insert_rowid();
+    test_fixture
         .connection
         .execute(
             "UPDATE service_visits
@@ -201,7 +201,7 @@ fn one_active_visit_per_motorcycle_allows_unlimited_inactive_history() {
             [second_id],
         )
         .expect("open visit should cancel");
-    let cancelled_labor: i64 = fixture
+    let cancelled_labor: i64 = test_fixture
         .connection
         .query_row(
             "SELECT labor_charge_fils FROM service_visits WHERE id = ?1",
@@ -211,23 +211,23 @@ fn one_active_visit_per_motorcycle_allows_unlimited_inactive_history() {
         .expect("cancelled visit labor should be queryable");
     assert_eq!(cancelled_labor, 5_000);
     insert_closed_visit(
-        &fixture.connection,
-        fixture.motorcycle_id,
-        fixture.owner_id,
+        &test_fixture.connection,
+        test_fixture.motorcycle_id,
+        test_fixture.owner_id,
         3_000,
     )
     .expect("a second closed visit should be allowed");
     insert_closed_visit(
-        &fixture.connection,
-        fixture.motorcycle_id,
-        fixture.owner_id,
+        &test_fixture.connection,
+        test_fixture.motorcycle_id,
+        test_fixture.owner_id,
         4_000,
     )
     .expect("a third closed visit should be allowed");
     insert_open_visit(
-        &fixture.connection,
-        fixture.motorcycle_id,
-        fixture.owner_id,
+        &test_fixture.connection,
+        test_fixture.motorcycle_id,
+        test_fixture.owner_id,
         "After cancel",
         None,
         0_i64,
