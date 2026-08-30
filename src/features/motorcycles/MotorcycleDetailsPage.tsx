@@ -4,7 +4,6 @@ import {
   Gauge,
   Hash,
   Palette,
-  Plus,
   User,
   Wrench,
 } from "lucide-react";
@@ -143,10 +142,7 @@ export function MotorcycleDetailsPage({
             <p>Complete workshop history for this motorcycle.</p>
           </div>
 
-          <button className="primary-button service-action" type="button">
-            <Plus size={17} />
-            New Service Visit
-          </button>
+
         </div>
 
         <div className="content-panel">

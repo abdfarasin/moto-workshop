@@ -1,0 +1,30 @@
+.labor-charge-input {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.labor-charge-input input {
+  width: 90px;
+  height: 32px;
+
+  padding-inline: 8px;
+
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+
+  background: white;
+  color: var(--text-primary);
+
+  text-align: end;
+}
+
+.labor-charge-input input:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+
+.labor-charge-input span {
+  color: var(--text-secondary);
+  font-size: 12px;
+}

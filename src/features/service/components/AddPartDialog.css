@@ -1,0 +1,118 @@
+.dialog-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+
+  display: grid;
+  place-items: center;
+
+  padding: 24px;
+
+  background: rgba(15, 23, 42, 0.42);
+}
+
+.add-part-dialog {
+  width: min(560px, 100%);
+  max-height: calc(100vh - 48px);
+
+  overflow: auto;
+
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+
+  background: var(--bg-surface);
+}
+
+.add-part-dialog-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 20px;
+
+  padding: 18px;
+
+  border-bottom: 1px solid var(--border);
+}
+
+.add-part-dialog-title {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+}
+
+.add-part-dialog-title h2 {
+  margin: 0;
+
+  font-size: 16px;
+  font-weight: 650;
+}
+
+.add-part-dialog-title p {
+  margin: 3px 0 0;
+
+  color: var(--text-secondary);
+
+  font-size: 12px;
+}
+
+.dialog-close-button {
+  width: 32px;
+  height: 32px;
+
+  display: grid;
+  place-items: center;
+
+  padding: 0;
+
+  border: 0;
+  border-radius: var(--radius-sm);
+
+  background: transparent;
+  color: var(--text-secondary);
+}
+
+.dialog-close-button:hover {
+  background: var(--bg-app);
+  color: var(--text-primary);
+}
+
+.add-part-dialog-body {
+  padding: 18px;
+
+  color: var(--text-secondary);
+
+  font-size: 13px;
+}
+.add-part-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.add-part-field label {
+  color: var(--text-secondary);
+
+  font-size: 11.5px;
+  font-weight: 600;
+}
+
+.add-part-select {
+  width: 100%;
+  height: 38px;
+
+  padding-inline: 10px;
+
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+
+  background: white;
+  color: var(--text-primary);
+
+  font: inherit;
+  font-size: 13px;
+}
+
+.add-part-select:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}

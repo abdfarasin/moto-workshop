@@ -70,6 +70,22 @@ export const previewCustomers: CustomerPreview[] = [
       },
     ],
     serviceHistory: [
+        {
+        id: 125,
+        date: "Aug 30, 2026",
+        motorcycleId: 1,
+        odometerKm: 15_870,
+
+        complaint: "Engine makes a ticking noise when hot.",
+        diagnosis: undefined,
+        workPerformed: undefined,
+
+        laborChargeFils: 0,
+        parts: [],
+
+        status: "OPEN",
+        totalFils: 0,
+        },
       {
   id: 104,
   date: "Aug 28, 2026",

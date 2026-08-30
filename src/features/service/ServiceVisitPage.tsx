@@ -1,3 +1,5 @@
+import { useState } from "react";
+
 import {
   ArrowLeft,
   Bike,
@@ -7,12 +9,22 @@ import {
   Wrench,
 } from "lucide-react";
 
+import "./ServiceVisitPage.css";
+import { JobDetailsCard } from "./components/JobDetailsCard";
+import { LaborChargeField } from "./components/LaborChargeField";
+import { AddPartDialog } from "./components/AddPartDialog";
+import { canEditServiceVisit } from "./functions/canEditServiceVisit";
+import { calculatePartsTotal } from "./functions/calculatePartsTotal";
+import { formatServiceVisitStatus } from "./functions/formatServiceVisitStatus";
+import { canAddServiceVisitPart } from "./functions/canAddServiceVisitPart";
+
 import type {
   CustomerPreview,
   MotorcyclePreview,
   ServiceHistoryPreview,
 } from "../customers/customerPreviewData";
 
+import "./ServiceVisitPage.css";
 type ServiceVisitPageProps = {
   customer: CustomerPreview;
   motorcycle: MotorcyclePreview;
@@ -30,10 +42,10 @@ export function ServiceVisitPage({
   visit,
   onBack,
 }: ServiceVisitPageProps) {
-  const partsTotalFils = visit.parts.reduce(
-    (total, part) => total + part.lineTotalFils,
-    0,
-  );
+  const editable = canEditServiceVisit(visit);
+  const canAddPart = canAddServiceVisitPart(visit);
+  const [addPartOpen, setAddPartOpen] = useState(false);
+  const partsTotalFils = calculatePartsTotal(visit.parts);
 
   return (
     <section className="service-visit-page">
@@ -54,7 +66,7 @@ export function ServiceVisitPage({
             <span
               className={`status-badge status-${visit.status.toLowerCase()}`}
             >
-              {visit.status.replace(/_/g, " ")}
+              {formatServiceVisitStatus(visit.status)}
             </span>
           </div>
 
@@ -81,32 +93,7 @@ export function ServiceVisitPage({
 
       <div className="service-workspace-grid">
         <div className="service-workspace-main">
-          <section className="workspace-card">
-            <div className="workspace-card-header">
-              <h2>Job Details</h2>
-            </div>
-
-            <div className="service-field">
-              <label>Customer Complaint</label>
-              <div className="read-only-field">
-                {visit.complaint}
-              </div>
-            </div>
-
-            <div className="service-field">
-              <label>Diagnosis</label>
-              <div className="read-only-field multiline">
-                {visit.diagnosis ?? "Not recorded"}
-              </div>
-            </div>
-
-            <div className="service-field">
-              <label>Work Performed</label>
-              <div className="read-only-field multiline">
-                {visit.workPerformed ?? "Not recorded"}
-              </div>
-            </div>
-          </section>
+            <JobDetailsCard visit={visit} />
 
           <section className="workspace-card">
             <div className="workspace-card-header">
@@ -114,12 +101,12 @@ export function ServiceVisitPage({
                 <h2>Parts Used</h2>
                 <p>Parts and materials recorded during this visit.</p>
               </div>
-
-              <button
-                type="button"
-                className="secondary-button"
-                disabled={visit.status === "CLOSED"}
-              >
+                    <button
+                    type="button"
+                    className="secondary-button"
+                    disabled={!canAddPart}
+                    onClick={() => setAddPartOpen(true)}
+                    >
                 <Package size={16} />
                 Add Part
               </button>
@@ -191,8 +178,12 @@ export function ServiceVisitPage({
             <div className="summary-divider" />
 
             <div className="summary-info-row">
-              <span>Labor</span>
-              <strong>{formatMoney(visit.laborChargeFils)}</strong>
+            <span>Labor</span>
+
+            <LaborChargeField
+                laborChargeFils={visit.laborChargeFils}
+                editable={editable}
+            />
             </div>
 
             <div className="summary-info-row">
@@ -215,6 +206,10 @@ export function ServiceVisitPage({
           </section>
         </aside>
       </div>
+      <AddPartDialog
+  open={addPartOpen}
+  onClose={() => setAddPartOpen(false)}
+/>
     </section>
   );
 }
