@@ -6,7 +6,9 @@ mod repositories;
 pub mod runtime;
 
 use commands::customer::create_customer;
-use commands::motorcycle_registration::load_motorcycle_registration_reference_data;
+use commands::motorcycle_registration::{
+    create_motorcycle, load_motorcycle_registration_reference_data,
+};
 use commands::service_visit_lookup::{list_customer_motorcycles, search_customers};
 use commands::service_visit_workspace::{
     add_service_visit_part, cancel_service_visit, close_service_visit, create_service_visit,
@@ -29,6 +31,7 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             create_customer,
+            create_motorcycle,
             load_motorcycle_registration_reference_data,
             search_customers,
             list_customer_motorcycles,

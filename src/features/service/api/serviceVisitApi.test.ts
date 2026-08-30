@@ -6,6 +6,7 @@ import {
   cancelServiceVisit,
   closeServiceVisit,
   createCustomer,
+  createMotorcycle,
   createServiceVisit,
   isServiceVisitCommandError,
   listCustomerMotorcycles,
@@ -25,6 +26,7 @@ import type {
   CancelServiceVisitInput,
   CloseServiceVisitInput,
   CreateCustomerInput,
+  CreateMotorcycleInput,
   CreateServiceVisitInput,
   InventoryItemSelection,
   CustomerMotorcycleLookup,
@@ -353,6 +355,79 @@ describe("Service Visit API", () => {
     );
     expect(result).toEqual(referenceData);
     expectTypeOf(result).toEqualTypeOf<MotorcycleRegistrationReferenceData>();
+  });
+
+  test("creates a Motorcycle with exactly the safe Tauri input wrapper", async () => {
+    // Arrange
+    const input: CreateMotorcycleInput = {
+      customerId: 13,
+      makeId: 1,
+      model: "CB150R",
+      year: 2022,
+      plateCodeId: 3,
+      plateNumber: "12345",
+      vin: null,
+      chassisNumber: null,
+      colorId: 2,
+      notes: null,
+      createdAt: 2_000,
+    };
+    const motorcycle: CustomerMotorcycleLookup = {
+      id: 11,
+      makeName: "Honda",
+      model: "CB150R",
+      year: 2022,
+      colorName: "Black",
+      plateCode: "29",
+      plateNumber: 12345,
+      vin: null,
+      chassisNumber: null,
+      activeServiceVisitId: null,
+      activeServiceVisitStatus: null,
+    };
+    invokeMock.mockResolvedValue(motorcycle);
+
+    // Act
+    const result = await createMotorcycle(input);
+
+    // Assert
+    expect(invokeMock).toHaveBeenCalledWith("create_motorcycle", { input });
+    expect(result).toEqual(motorcycle);
+    expectTypeOf(result).toEqualTypeOf<CustomerMotorcycleLookup>();
+  });
+
+  test("preserves motorcycleIdentityAlreadyExists across Motorcycle creation", async () => {
+    // Arrange
+    const input: CreateMotorcycleInput = {
+      customerId: 13,
+      makeId: 1,
+      model: "CB150R",
+      year: null,
+      plateCodeId: null,
+      plateNumber: null,
+      vin: "1HGCM82633A004352",
+      chassisNumber: null,
+      colorId: 2,
+      notes: null,
+      createdAt: 2_000,
+    };
+    invokeMock.mockRejectedValue({
+      category: "motorcycleIdentityAlreadyExists",
+      message: "A Motorcycle with this identity already exists.",
+    });
+
+    // Act
+    const error = await createMotorcycle(input).catch(
+      (rejection: unknown) => rejection,
+    );
+
+    // Assert
+    expect(error).toBeInstanceOf(ServiceVisitCommandError);
+    expect(isServiceVisitCommandError(error)).toBe(true);
+    expect(error).toMatchObject({
+      category: "motorcycleIdentityAlreadyExists",
+      message: "A Motorcycle with this identity already exists.",
+    });
   });
 
   test("searches Customers with the exact lookup command and input wrapper", async () => {

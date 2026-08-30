@@ -203,6 +203,7 @@ pub struct CommandError {
 pub enum CommandErrorCategory {
     CustomerNotFound,
     CustomerPhoneAlreadyExists,
+    MotorcycleIdentityAlreadyExists,
     MotorcycleNotFound,
     ActiveServiceVisitExists,
     ServiceVisitNotFound,

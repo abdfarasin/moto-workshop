@@ -9,6 +9,7 @@ export type ServiceVisitPartStatus = "ACTIVE" | "VOIDED";
 export type ServiceVisitCommandErrorCategory =
   | "customerNotFound"
   | "customerPhoneAlreadyExists"
+  | "motorcycleIdentityAlreadyExists"
   | "motorcycleNotFound"
   | "activeServiceVisitExists"
   | "serviceVisitNotFound"
@@ -141,6 +142,20 @@ export interface MotorcycleRegistrationReferenceData {
   makes: MotorcycleMakeReference[];
   colors: MotorcycleColorReference[];
   plateCodes: JordanPlateCodeReference[];
+}
+
+export interface CreateMotorcycleInput {
+  customerId: number;
+  makeId: number;
+  model: string;
+  year: number | null;
+  plateCodeId: number | null;
+  plateNumber: string | null;
+  vin: string | null;
+  chassisNumber: string | null;
+  colorId: number;
+  notes: string | null;
+  createdAt: number;
 }
 
 export type ActiveServiceVisitStatus = "OPEN" | "READY_FOR_PICKUP";

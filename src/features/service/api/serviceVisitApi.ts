@@ -5,6 +5,7 @@ import type {
   CancelServiceVisitInput,
   CloseServiceVisitInput,
   CreateCustomerInput,
+  CreateMotorcycleInput,
   CreateServiceVisitInput,
   CustomerMotorcycleLookup,
   CustomerSummary,
@@ -24,6 +25,7 @@ import type {
 const commandErrorCategories: readonly ServiceVisitCommandErrorCategory[] = [
   "customerNotFound",
   "customerPhoneAlreadyExists",
+  "motorcycleIdentityAlreadyExists",
   "motorcycleNotFound",
   "activeServiceVisitExists",
   "serviceVisitNotFound",
@@ -116,6 +118,15 @@ export function createCustomer(
   input: CreateCustomerInput,
 ): Promise<CustomerSummary> {
   return invokeServiceVisitCommand<CustomerSummary>("create_customer", { input });
+}
+
+export function createMotorcycle(
+  input: CreateMotorcycleInput,
+): Promise<CustomerMotorcycleLookup> {
+  return invokeServiceVisitCommand<CustomerMotorcycleLookup>(
+    "create_motorcycle",
+    { input },
+  );
 }
 
 export function loadMotorcycleRegistrationReferenceData(): Promise<MotorcycleRegistrationReferenceData> {
@@ -216,6 +227,7 @@ export type {
   CancelServiceVisitInput,
   CloseServiceVisitInput,
   CreateCustomerInput,
+  CreateMotorcycleInput,
   CreateServiceVisitInput,
   CustomerMotorcycleLookup,
   CustomerSummary,

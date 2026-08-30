@@ -2,9 +2,18 @@ use std::{error::Error, fmt};
 
 use rusqlite::Connection;
 
-use crate::repositories::motorcycle_registration::{
-    MotorcycleColorRow, MotorcycleMakeRow, MotorcycleRegistrationRepository, PlateCodeRow,
+use crate::{
+    domain::motorcycle::{MotorcycleValidationError, NewMotorcycle, NewMotorcycleInput},
+    repositories::{
+        motorcycle_registration::{
+            MotorcycleColorRow, MotorcycleInsertError, MotorcycleMakeRow,
+            MotorcycleRegistrationRepository, PlateCodeRow,
+        },
+        service_visit_lookup::ServiceVisitLookupRepository,
+    },
 };
+
+use super::service_visit_lookup::CustomerMotorcycleLookup;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MotorcycleMakeReference {
@@ -31,33 +40,89 @@ pub struct MotorcycleRegistrationReferenceData {
     pub plate_codes: Vec<JordanPlateCodeReference>,
 }
 
+#[derive(Debug, PartialEq, Eq)]
+pub struct CreateMotorcycleInput {
+    pub customer_id: i64,
+    pub make_id: i64,
+    pub model: String,
+    pub year: Option<i32>,
+    pub plate_code_id: Option<i64>,
+    pub plate_number: Option<String>,
+    pub vin: Option<String>,
+    pub chassis_number: Option<String>,
+    pub color_id: i64,
+    pub notes: Option<String>,
+    pub created_at: i64,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MotorcycleRegistrationReference {
+    Make,
+    Color,
+    PlateCode,
+}
+
 #[derive(Debug)]
-pub struct MotorcycleRegistrationError(rusqlite::Error);
+pub enum MotorcycleRegistrationError {
+    InvalidTimestamp,
+    CustomerNotFound(i64),
+    InvalidReference(MotorcycleRegistrationReference),
+    Validation(MotorcycleValidationError),
+    IdentityAlreadyExists,
+    Database(rusqlite::Error),
+}
 
 impl fmt::Display for MotorcycleRegistrationError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(formatter, "database operation failed: {}", self.0)
+        match self {
+            Self::InvalidTimestamp => write!(formatter, "motorcycle timestamp is invalid"),
+            Self::CustomerNotFound(id) => write!(formatter, "customer {id} was not found"),
+            Self::InvalidReference(reference) => {
+                write!(formatter, "motorcycle reference {reference:?} is invalid")
+            }
+            Self::Validation(error) => write!(formatter, "invalid motorcycle: {error:?}"),
+            Self::IdentityAlreadyExists => write!(formatter, "motorcycle identity already exists"),
+            Self::Database(error) => write!(formatter, "database operation failed: {error}"),
+        }
     }
 }
 
 impl Error for MotorcycleRegistrationError {
     fn source(&self) -> Option<&(dyn Error + 'static)> {
-        Some(&self.0)
+        match self {
+            Self::Database(error) => Some(error),
+            _ => None,
+        }
     }
 }
 
 impl From<rusqlite::Error> for MotorcycleRegistrationError {
     fn from(error: rusqlite::Error) -> Self {
-        Self(error)
+        Self::Database(error)
+    }
+}
+
+impl From<MotorcycleValidationError> for MotorcycleRegistrationError {
+    fn from(error: MotorcycleValidationError) -> Self {
+        Self::Validation(error)
+    }
+}
+
+impl From<MotorcycleInsertError> for MotorcycleRegistrationError {
+    fn from(error: MotorcycleInsertError) -> Self {
+        match error {
+            MotorcycleInsertError::IdentityAlreadyExists => Self::IdentityAlreadyExists,
+            MotorcycleInsertError::Database(error) => Self::Database(error),
+        }
     }
 }
 
 pub struct MotorcycleRegistrationService<'connection> {
-    connection: &'connection Connection,
+    connection: &'connection mut Connection,
 }
 
 impl<'connection> MotorcycleRegistrationService<'connection> {
-    pub fn new(connection: &'connection Connection) -> Self {
+    pub fn new(connection: &'connection mut Connection) -> Self {
         Self { connection }
     }
 
@@ -82,6 +147,61 @@ impl<'connection> MotorcycleRegistrationService<'connection> {
                 .map(Into::into)
                 .collect(),
         })
+    }
+
+    pub fn create_motorcycle(
+        &mut self,
+        input: CreateMotorcycleInput,
+    ) -> Result<CustomerMotorcycleLookup, MotorcycleRegistrationError> {
+        if input.created_at < 0 {
+            return Err(MotorcycleRegistrationError::InvalidTimestamp);
+        }
+        let transaction = self.connection.transaction()?;
+        let repository = MotorcycleRegistrationRepository::new(&transaction);
+        if !repository.current_customer_exists(input.customer_id)? {
+            return Err(MotorcycleRegistrationError::CustomerNotFound(
+                input.customer_id,
+            ));
+        }
+        if !repository.active_make_exists(input.make_id)? {
+            return Err(MotorcycleRegistrationError::InvalidReference(
+                MotorcycleRegistrationReference::Make,
+            ));
+        }
+        if !repository.active_color_exists(input.color_id)? {
+            return Err(MotorcycleRegistrationError::InvalidReference(
+                MotorcycleRegistrationReference::Color,
+            ));
+        }
+        if let Some(plate_code_id) = input.plate_code_id {
+            if !repository.active_plate_code_exists(plate_code_id)? {
+                return Err(MotorcycleRegistrationError::InvalidReference(
+                    MotorcycleRegistrationReference::PlateCode,
+                ));
+            }
+        }
+        let current_year = repository.current_local_year()?;
+        let motorcycle = NewMotorcycle::new(
+            NewMotorcycleInput {
+                make_id: input.make_id,
+                model: input.model,
+                year: input.year,
+                plate_code_id: input.plate_code_id,
+                plate_number: input.plate_number,
+                vin: input.vin,
+                chassis_number: input.chassis_number,
+                color_id: input.color_id,
+                notes: input.notes,
+            },
+            current_year,
+        )?;
+        let motorcycle_id =
+            repository.insert_motorcycle(&motorcycle, input.customer_id, input.created_at)?;
+        let created = ServiceVisitLookupRepository::new(&transaction)
+            .find_customer_motorcycle(input.customer_id, motorcycle_id)?
+            .ok_or(rusqlite::Error::QueryReturnedNoRows)?;
+        transaction.commit()?;
+        Ok(created.into())
     }
 }
 

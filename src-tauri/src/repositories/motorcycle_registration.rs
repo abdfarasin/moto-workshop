@@ -1,4 +1,6 @@
-use rusqlite::Connection;
+use rusqlite::{ffi, params, Connection};
+
+use crate::domain::motorcycle::NewMotorcycle;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MotorcycleMakeRow {
@@ -16,6 +18,12 @@ pub struct MotorcycleColorRow {
 pub struct PlateCodeRow {
     pub id: i64,
     pub code: String,
+}
+
+#[derive(Debug)]
+pub enum MotorcycleInsertError {
+    IdentityAlreadyExists,
+    Database(rusqlite::Error),
 }
 
 pub struct MotorcycleRegistrationRepository<'connection> {
@@ -70,5 +78,101 @@ impl<'connection> MotorcycleRegistrationRepository<'connection> {
             })
         })?;
         rows.collect()
+    }
+
+    pub fn current_local_year(&self) -> rusqlite::Result<i32> {
+        self.connection.query_row(
+            "SELECT CAST(strftime('%Y', 'now', 'localtime') AS INTEGER)",
+            [],
+            |row| row.get(0),
+        )
+    }
+
+    pub fn current_customer_exists(&self, customer_id: i64) -> rusqlite::Result<bool> {
+        self.connection.query_row(
+            "SELECT EXISTS(
+                SELECT 1 FROM customers WHERE id = ?1 AND archived_at IS NULL
+             )",
+            [customer_id],
+            |row| row.get(0),
+        )
+    }
+
+    pub fn active_make_exists(&self, make_id: i64) -> rusqlite::Result<bool> {
+        self.connection.query_row(
+            "SELECT EXISTS(
+                SELECT 1 FROM motorcycle_makes WHERE id = ?1 AND active = 1
+             )",
+            [make_id],
+            |row| row.get(0),
+        )
+    }
+
+    pub fn active_color_exists(&self, color_id: i64) -> rusqlite::Result<bool> {
+        self.connection.query_row(
+            "SELECT EXISTS(
+                SELECT 1 FROM motorcycle_colors WHERE id = ?1 AND active = 1
+             )",
+            [color_id],
+            |row| row.get(0),
+        )
+    }
+
+    pub fn active_plate_code_exists(&self, plate_code_id: i64) -> rusqlite::Result<bool> {
+        self.connection.query_row(
+            "SELECT EXISTS(
+                SELECT 1 FROM jordan_plate_codes WHERE id = ?1 AND active = 1
+             )",
+            [plate_code_id],
+            |row| row.get(0),
+        )
+    }
+
+    pub fn insert_motorcycle(
+        &self,
+        motorcycle: &NewMotorcycle,
+        customer_id: i64,
+        created_at: i64,
+    ) -> Result<i64, MotorcycleInsertError> {
+        let (plate_code_id, plate_number) = motorcycle
+            .plate()
+            .map(|plate| (plate.code_id(), i64::from(plate.number().value())))
+            .unzip();
+        self.connection
+            .execute(
+                "INSERT INTO motorcycles (
+                    customer_id, make_id, model, year, plate_code_id, plate_number,
+                    vin, chassis_number, color_id, notes, created_at, updated_at
+                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?11)",
+                params![
+                    customer_id,
+                    motorcycle.make_id(),
+                    motorcycle.model(),
+                    motorcycle.year(),
+                    plate_code_id,
+                    plate_number,
+                    motorcycle.vin().map(|vin| vin.as_str()),
+                    motorcycle
+                        .chassis_number()
+                        .map(|chassis_number| chassis_number.as_str()),
+                    motorcycle.color_id(),
+                    motorcycle.notes(),
+                    created_at,
+                ],
+            )
+            .map_err(classify_insert_error)?;
+        Ok(self.connection.last_insert_rowid())
+    }
+}
+
+fn classify_insert_error(error: rusqlite::Error) -> MotorcycleInsertError {
+    if matches!(
+        &error,
+        rusqlite::Error::SqliteFailure(code, _)
+            if code.extended_code == ffi::SQLITE_CONSTRAINT_UNIQUE
+    ) {
+        MotorcycleInsertError::IdentityAlreadyExists
+    } else {
+        MotorcycleInsertError::Database(error)
     }
 }

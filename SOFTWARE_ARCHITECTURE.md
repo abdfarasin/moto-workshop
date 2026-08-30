@@ -39,7 +39,7 @@ flowchart LR
 ## Frontend
 
 - `src/main.tsx` mounts the React application.
-- `src/features/service/api/` owns the typed TypeScript contract and the fourteen `invoke` wrappers for Customer creation, Motorcycle registration reference data, Customer/Motorcycle lookup, and Service Visit creation, workspace, Part, work-field, and lifecycle commands. It preserves known backend error categories and distinguishes non-contract transport failures.
+- `src/features/service/api/` owns the typed TypeScript contract and the fifteen `invoke` wrappers for Customer and Motorcycle creation, Motorcycle registration reference data, Customer/Motorcycle lookup, and Service Visit creation, workspace, Part, work-field, and lifecycle commands. It preserves known backend error categories and distinguishes non-contract transport failures.
 - Current workshop screens still use frontend preview data and do not invoke the new backend commands yet.
 - No persistence logic is embedded in React components.
 
@@ -52,15 +52,17 @@ flowchart LR
 - The rusqlite connection is held in Tauri managed state behind a standard `Mutex`; each synchronous command locks it only for its application-service call.
 - Startup path resolution, directory creation, database opening, and migration errors abort startup with a clear failure rather than continuing with an invalid database.
 - The template `greet` command has been removed.
-- Fourteen workshop commands are registered. Customer onboarding provides `create_customer`; Motorcycle registration reference data provides `load_motorcycle_registration_reference_data`; the read-only Service Visit creation lookup boundary provides `search_customers` and `list_customer_motorcycles`; the existing workspace boundary provides `create_service_visit`, `load_service_visit_workspace`, `list_service_visit_inventory_items`, `update_service_visit_work`, `add_service_visit_part`, `void_service_visit_part`, `mark_service_visit_ready_for_pickup`, `reopen_service_visit`, `close_service_visit`, and `cancel_service_visit`.
+- Fifteen workshop commands are registered. Customer onboarding provides `create_customer`; Motorcycle onboarding provides `load_motorcycle_registration_reference_data` and `create_motorcycle`; the read-only Service Visit creation lookup boundary provides `search_customers` and `list_customer_motorcycles`; the existing workspace boundary provides `create_service_visit`, `load_service_visit_workspace`, `list_service_visit_inventory_items`, `update_service_visit_work`, `add_service_visit_part`, `void_service_visit_part`, `mark_service_visit_ready_for_pickup`, `reopen_service_visit`, `close_service_visit`, and `cancel_service_visit`.
 
 ### Customer creation command boundary
 
 `commands/customer.rs` exposes the synchronous `create_customer` command. Its explicit camelCase input denies unknown fields and contains only `{ name, phone, notes, createdAt }`; generated identity, archival state, normalization, and initial `updatedAt` are not caller-controlled. The command returns only generated ID, normalized name, and canonical phone. Domain failures map to `validationError`, canonical phone collisions map to `customerPhoneAlreadyExists`, and database details remain sanitized.
 
-### Motorcycle registration reference-data command boundary
+### Motorcycle registration command boundary
 
-`commands/motorcycle_registration.rs` exposes the no-input synchronous `load_motorcycle_registration_reference_data` command. It returns active makes and colors as `{ id, name }` plus active Jordan plate codes as `{ id, code }`, grouped under the camelCase `makes`, `colors`, and `plateCodes` fields. Motorcycle creation and current-year validation remain outside this boundary.
+`commands/motorcycle_registration.rs` exposes the no-input synchronous `load_motorcycle_registration_reference_data` command and the synchronous `create_motorcycle` command. Reference data contains active makes and colors as `{ id, name }` plus active Jordan plate codes as `{ id, code }`, grouped under the camelCase `makes`, `colors`, and `plateCodes` fields.
+
+The create command's explicit camelCase input denies unknown fields and contains only `{ customerId, makeId, model, year, plateCodeId, plateNumber, vin, chassisNumber, colorId, notes, createdAt }`. It does not accept a current year, generated or normalized identity fields, `updatedAt`, archival state, or active-Visit state. It returns the existing joined `CustomerMotorcycleLookup` presentation. Missing or archived Customers map to `customerNotFound`; invalid catalog references, timestamps, and domain input map to `validationError`; identity collisions map to `motorcycleIdentityAlreadyExists`; and unexpected persistence details remain behind `databaseError`.
 
 ### Customer and Motorcycle lookup command boundary
 
@@ -72,7 +74,7 @@ Customer summaries expose only ID, name, and phone. Motorcycle summaries expose 
 
 `commands/service_visit_workspace.rs` is a thin synchronous adapter. It contains no SQL or business validation. It maps explicit camelCase serde input/output DTOs to the existing application service and maps application failures to a stable `{ category, message }` command error.
 
-Service Visit statuses serialize exactly as `OPEN`, `READY_FOR_PICKUP`, `CLOSED`, and `CANCELLED`. Part statuses serialize as `ACTIVE` and `VOIDED`; neither contract depends on Rust Debug formatting. Error categories serialize in camelCase: `customerNotFound`, `customerPhoneAlreadyExists`, `motorcycleNotFound`, `activeServiceVisitExists`, `serviceVisitNotFound`, `inventoryItemNotFound`, `serviceVisitPartNotFound`, `lifecycleRejected`, `validationError`, and `databaseError`. Database messages deliberately omit raw SQL and SQLite details.
+Service Visit statuses serialize exactly as `OPEN`, `READY_FOR_PICKUP`, `CLOSED`, and `CANCELLED`. Part statuses serialize as `ACTIVE` and `VOIDED`; neither contract depends on Rust Debug formatting. Error categories serialize in camelCase: `customerNotFound`, `customerPhoneAlreadyExists`, `motorcycleIdentityAlreadyExists`, `motorcycleNotFound`, `activeServiceVisitExists`, `serviceVisitNotFound`, `inventoryItemNotFound`, `serviceVisitPartNotFound`, `lifecycleRejected`, `validationError`, and `databaseError`. Database messages deliberately omit raw SQL and SQLite details.
 
 The create command accepts only Motorcycle ID, opening timestamp, optional odometer, complaint, optional notes, and creation timestamp. It cannot accept an owner snapshot or initial lifecycle/work/Invoice state. Motorcycle lookup and active-Visit checks are application responsibilities, while the domain produces the normalized OPEN aggregate and the schema-v5 trigger creates its single DRAFT Invoice.
 
@@ -153,9 +155,11 @@ Stock Movement instances expose no mutation behavior. Persistence supplies the p
 
 `application/customer.rs` rejects negative timestamps, constructs `NewCustomer` to obtain all name, phone, and notes normalization/validation, and performs insertion in one transaction. It never normalizes phone input independently and never uses the system clock. Blank normalized notes persist as NULL, and its result contains only the generated ID, normalized name, and canonical persisted phone.
 
-### Motorcycle registration reference-data repository and application service
+### Motorcycle registration repository and application service
 
-`repositories/motorcycle_registration.rs` contains three small read-only catalog queries. Each filters `active = 1` and orders case-insensitively by the presentation value with ID as a stable tiebreaker. `application/motorcycle_registration.rs` bundles these results into makes, colors, and plate codes without mutation or clock dependencies. No seed, schema, or `NewMotorcycle` behavior is changed.
+`repositories/motorcycle_registration.rs` contains the focused catalog, validation, trusted-year, and insert persistence used by Motorcycle onboarding. Catalog queries filter `active = 1` and order case-insensitively by presentation value with ID as a stable tiebreaker. Creation checks a current non-archived Customer and active make, color, and optional plate-code rows. The current local calendar year comes from SQLite's `strftime('%Y', 'now', 'localtime')` scalar rather than caller input. Insert persistence accepts only a domain-validated `NewMotorcycle`, stores its normalized values, initializes `updated_at` from `created_at`, and leaves `archived_at` NULL. SQLite UNIQUE result codes are classified as identity collisions without parsing or exposing database messages.
+
+`application/motorcycle_registration.rs` bundles reference data and orchestrates creation in one transaction. It rejects a negative creation timestamp, performs authoritative Customer/reference checks, obtains the backend year, constructs `NewMotorcycle::new(NewMotorcycleInput, current_year)`, inserts the normalized aggregate, and reloads the created row through the existing joined Motorcycle presentation query before committing. Domain rules remain solely in `NewMotorcycle`; failed validation, lookup, insert, or reload leaves no partial Motorcycle row.
 
 ### Service Visit workspace repositories
 
@@ -224,14 +228,14 @@ Migration 7 rebuilds `stock_movements` transactionally, preserves every v6 row a
 
 - `src-tauri/tests/domain/` tests pure domain behavior and uses `proptest` for input-safety properties.
 - `src-tauri/tests/database/` uses isolated temporary SQLite databases for connection, migration, catalog, Customer, Motorcycle, ServiceVisit, Invoice, Inventory, and stock-ledger integration behavior.
-- `src-tauri/tests/application/` uses isolated temporary SQLite databases to verify Customer creation and canonical duplicate handling, active Motorcycle registration catalogs, Customer/Motorcycle lookup, authoritative-owner Service Visit creation, draft-Invoice effects, repository queries, and complete workspace use cases across the application/domain/schema boundaries.
-- Rust command integration tests exercise handlers against real temporary schema-v7 databases, including lookup results, runtime migration, camelCase DTO mapping, lifecycle orchestration, stable status/error serialization, safe inputs, and sanitized database failures.
+- `src-tauri/tests/application/` uses isolated temporary SQLite databases to verify Customer creation and canonical duplicate handling, active Motorcycle registration catalogs, transactional Motorcycle creation through authoritative domain rules and trusted backend year, Customer/Motorcycle lookup, authoritative-owner Service Visit creation, draft-Invoice effects, repository queries, and complete workspace use cases across the application/domain/schema boundaries.
+- Rust command integration tests exercise handlers against real temporary schema-v7 databases, including onboarding and lookup results, runtime migration, camelCase DTO mapping, lifecycle orchestration, stable status/error serialization, safe inputs, and sanitized duplicate/database failures.
 - Migration tests exercise the public migration runner and observable stopping points instead of private migration functions.
 - Frontend compilation is verified with `npm run build`; Vitest exercises the feature-local Service Visit API at the Tauri transport boundary.
 
 ## Current end-to-end limitation
 
-The Service Visit feature now has production Customer creation, Motorcycle registration reference data, Customer/Motorcycle lookup, and application orchestration for Visit creation, work, Parts, and existing lifecycle transitions. Runtime database initialization, registered Tauri commands, and feature-local typed TypeScript invoke wrappers are present. Motorcycle creation, replacement of frontend preview data, and React wiring remain deferred, so current screens do not call these boundaries yet.
+The Service Visit feature now has production Customer creation, Motorcycle registration and reference data, Customer/Motorcycle lookup, and application orchestration for Visit creation, work, Parts, and existing lifecycle transitions. Runtime database initialization, registered Tauri commands, and feature-local typed TypeScript invoke wrappers are present. Replacement of frontend preview data and React wiring remain deferred, so current screens do not call these boundaries yet.
 
 ## Deferred Invoice integration
 
