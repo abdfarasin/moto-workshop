@@ -1,50 +1,98 @@
 import { useState } from "react";
-import reactLogo from "./assets/react.svg";
-import { invoke } from "@tauri-apps/api/core";
+
+import { AppShell, type AppSection } from "./components/AppShell";
+import { CustomerDetailsPage } from "./features/customers/CustomerDetailsPage";
+import { CustomersPage } from "./features/customers/CustomersPage";
+import { ServiceVisitPage } from "./features/service/ServiceVisitPage";
+
+import type {
+  CustomerPreview,
+  MotorcyclePreview,
+  ServiceHistoryPreview,
+
+} from "./features/customers/customerPreviewData";
+
+import { MotorcycleDetailsPage } from "./features/motorcycles/MotorcycleDetailsPage";
+
 import "./App.css";
 
 function App() {
-  const [greetMsg, setGreetMsg] = useState("");
-  const [name, setName] = useState("");
+  const [activeSection, setActiveSection] =
+    useState<AppSection>("customers");
 
-  async function greet() {
-    // Learn more about Tauri commands at https://tauri.app/develop/calling-rust/
-    setGreetMsg(await invoke("greet", { name }));
+  const [selectedCustomer, setSelectedCustomer] =
+    useState<CustomerPreview | null>(null);
+
+  const [selectedMotorcycle, setSelectedMotorcycle] =
+    useState<MotorcyclePreview | null>(null);
+
+  const [selectedVisit, setSelectedVisit] =
+  useState<ServiceHistoryPreview | null>(null);
+
+  function handleSectionChange(section: AppSection) {
+    setActiveSection(section);
+    setSelectedCustomer(null);
+    setSelectedMotorcycle(null);
+  }
+
+  function handleSelectCustomer(customer: CustomerPreview) {
+    setSelectedCustomer(customer);
+    setSelectedMotorcycle(null);
+  }
+
+  function handleBackToCustomer() {
+    setSelectedMotorcycle(null);
+  }
+
+  function handleBackToCustomers() {
+    setSelectedCustomer(null);
+    setSelectedMotorcycle(null);
   }
 
   return (
-    <main className="container">
-      <h1>Welcome to Tauri + React</h1>
-
-      <div className="row">
-        <a href="https://vite.dev" target="_blank">
-          <img src="/vite.svg" className="logo vite" alt="Vite logo" />
-        </a>
-        <a href="https://tauri.app" target="_blank">
-          <img src="/tauri.svg" className="logo tauri" alt="Tauri logo" />
-        </a>
-        <a href="https://react.dev" target="_blank">
-          <img src={reactLogo} className="logo react" alt="React logo" />
-        </a>
-      </div>
-      <p>Click on the Tauri, Vite, and React logos to learn more.</p>
-
-      <form
-        className="row"
-        onSubmit={(e) => {
-          e.preventDefault();
-          greet();
-        }}
-      >
-        <input
-          id="greet-input"
-          onChange={(e) => setName(e.currentTarget.value)}
-          placeholder="Enter a name..."
-        />
-        <button type="submit">Greet</button>
-      </form>
-      <p>{greetMsg}</p>
-    </main>
+    <AppShell
+      activeSection={activeSection}
+      onSectionChange={handleSectionChange}
+    >
+      {activeSection === "customers" ? (
+        selectedCustomer ? (
+          selectedMotorcycle ? (
+            selectedVisit ? (
+              <ServiceVisitPage
+                customer={selectedCustomer}
+                motorcycle={selectedMotorcycle}
+                visit={selectedVisit}
+                onBack={() => setSelectedVisit(null)}
+              />
+            ) : (
+              <MotorcycleDetailsPage
+                customer={selectedCustomer}
+                motorcycle={selectedMotorcycle}
+                onBack={handleBackToCustomer}
+                onSelectVisit={setSelectedVisit}
+              />
+            )
+          ) : (
+            <CustomerDetailsPage
+              customer={selectedCustomer}
+              onBack={handleBackToCustomers}
+              onSelectMotorcycle={setSelectedMotorcycle}
+            />
+          )
+        ) : (
+          <CustomersPage
+            onSelectCustomer={handleSelectCustomer}
+          />
+        )
+      ) : (
+        <section className="placeholder-page">
+          <h1>Coming next</h1>
+          <p>
+            This section will be implemented as its own application slice.
+          </p>
+        </section>
+      )}
+    </AppShell>
   );
 }
 
