@@ -1,3 +1,5 @@
+import "./SelectedInventoryItemInfo.css";
+
 import type { InventoryItemPreview } from "../../inventory/inventoryPreviewData";
 
 type SelectedInventoryItemInfoProps = {

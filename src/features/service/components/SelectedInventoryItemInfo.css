@@ -1,0 +1,29 @@
+.selected-inventory-info {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+
+  margin-top: 8px;
+}
+
+.selected-inventory-info > div {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.selected-inventory-info span {
+  color: var(--text-secondary);
+
+  font-size: 12px;
+}
+
+.selected-inventory-info strong {
+  color: var(--text-primary);
+
+  font-size: 12px;
+  font-weight: 600;
+
+  text-align: end;
+}

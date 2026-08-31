@@ -1,0 +1,53 @@
+.part-unit-price-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.part-unit-price-field label {
+  color: var(--text-secondary);
+
+  font-size: 11.5px;
+  font-weight: 600;
+}
+
+.part-unit-price-input {
+  display: flex;
+  align-items: center;
+
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+
+  background: white;
+}
+
+.part-unit-price-input:focus-within {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+
+.part-unit-price-input input {
+  min-width: 0;
+  height: 38px;
+  flex: 1;
+
+  padding-inline: 10px;
+
+  border: 0;
+
+  background: transparent;
+  color: var(--text-primary);
+
+  font: inherit;
+  font-size: 13px;
+}
+
+.part-unit-price-input span {
+  padding-inline: 12px;
+
+  color: var(--text-secondary);
+
+  font-size: 12px;
+
+  border-inline-start: 1px solid var(--border);
+}

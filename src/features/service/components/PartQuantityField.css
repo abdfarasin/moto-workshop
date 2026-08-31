@@ -1,0 +1,53 @@
+.part-quantity-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.part-quantity-field label {
+  color: var(--text-secondary);
+
+  font-size: 11.5px;
+  font-weight: 600;
+}
+
+.part-quantity-input {
+  display: flex;
+  align-items: center;
+
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+
+  background: white;
+}
+
+.part-quantity-input:focus-within {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+
+.part-quantity-input input {
+  min-width: 0;
+  height: 38px;
+  flex: 1;
+
+  padding-inline: 10px;
+
+  border: 0;
+
+  background: transparent;
+  color: var(--text-primary);
+
+  font: inherit;
+  font-size: 13px;
+}
+
+.part-quantity-input span {
+  padding-inline: 12px;
+
+  color: var(--text-secondary);
+
+  font-size: 12px;
+
+  border-inline-start: 1px solid var(--border);
+}

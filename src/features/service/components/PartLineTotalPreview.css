@@ -1,0 +1,24 @@
+.part-line-total-preview {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+
+  padding-top: 12px;
+
+  border-top: 1px solid var(--border);
+}
+
+.part-line-total-preview span {
+  color: var(--text-secondary);
+
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.part-line-total-preview strong {
+  color: var(--text-primary);
+
+  font-size: 15px;
+  font-weight: 700;
+}

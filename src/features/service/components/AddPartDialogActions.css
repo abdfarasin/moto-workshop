@@ -1,0 +1,16 @@
+.add-part-dialog-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+
+  padding: 14px 18px;
+
+  border-top: 1px solid var(--border);
+  background: var(--surface);
+}
+
+.add-part-dialog-actions .primary-button,
+.add-part-dialog-actions .secondary-button {
+  min-width: 92px;
+}
