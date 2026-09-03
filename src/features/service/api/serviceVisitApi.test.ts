@@ -10,6 +10,7 @@ import {
   createServiceVisit,
   isServiceVisitCommandError,
   listCustomerMotorcycles,
+  listServiceVisits,
   listServiceVisitInventoryItems,
   loadServiceVisitWorkspace,
   loadMotorcycleRegistrationReferenceData,
@@ -33,6 +34,8 @@ import type {
   CustomerSummary,
   MotorcycleRegistrationReferenceData,
   ServiceVisitPart,
+  ServiceVisitDirectoryEntry,
+  ListServiceVisitsInput,
   ServiceVisitStatus,
   ServiceVisitWorkspace,
   MarkServiceVisitReadyForPickupInput,
@@ -77,8 +80,7 @@ const workspace: ServiceVisitWorkspace = {
     makeName: "Honda",
     model: "CB150R",
     year: 2022,
-    plateCode: "29",
-    plateNumber: 12345,
+    plateNumber: "29-12345",
     vin: null,
     chassisNumber: null,
     colorName: "Black",
@@ -107,6 +109,39 @@ beforeEach(() => {
 });
 
 describe("Service Visit API", () => {
+  test("lists bounded Service Visits with the exact directory command input", async () => {
+    // Arrange
+    const input: ListServiceVisitsInput = {
+      query: "Ahmad",
+      statusFilter: "ACTIVE",
+      limit: 50,
+    };
+    const visits: ServiceVisitDirectoryEntry[] = [
+      {
+        id: 7,
+        customerName: "Ahmad Ali",
+        customerPhone: "+962791234567",
+        motorcycleId: 11,
+        makeName: "Honda",
+        model: "CB150R",
+        plateNumber: "29-12345",
+        openedAt: 1_000,
+        customerComplaint: "Oil leak",
+        status: "OPEN",
+        totalFils: 9_500,
+      },
+    ];
+    invokeMock.mockResolvedValue(visits);
+
+    // Act
+    const result = await listServiceVisits(input);
+
+    // Assert
+    expect(invokeMock).toHaveBeenCalledWith("list_service_visits", { input });
+    expect(result).toEqual(visits);
+    expectTypeOf(result).toEqualTypeOf<ServiceVisitDirectoryEntry[]>();
+  });
+
   test("loads a strongly typed workspace with the command's direct argument", async () => {
     // Arrange
     invokeMock.mockResolvedValue(workspace);
@@ -342,7 +377,6 @@ describe("Service Visit API", () => {
     const referenceData: MotorcycleRegistrationReferenceData = {
       makes: [{ id: 1, name: "Honda" }],
       colors: [{ id: 2, name: "Black" }],
-      plateCodes: [{ id: 3, code: "29" }],
     };
     invokeMock.mockResolvedValue(referenceData);
 
@@ -364,8 +398,7 @@ describe("Service Visit API", () => {
       makeId: 1,
       model: "CB150R",
       year: 2022,
-      plateCodeId: 3,
-      plateNumber: "12345",
+      plateNumber: "29-12345",
       vin: null,
       chassisNumber: null,
       colorId: 2,
@@ -378,8 +411,7 @@ describe("Service Visit API", () => {
       model: "CB150R",
       year: 2022,
       colorName: "Black",
-      plateCode: "29",
-      plateNumber: 12345,
+      plateNumber: "29-12345",
       vin: null,
       chassisNumber: null,
       activeServiceVisitId: null,
@@ -403,8 +435,7 @@ describe("Service Visit API", () => {
       makeId: 1,
       model: "CB150R",
       year: null,
-      plateCodeId: null,
-      plateNumber: null,
+      plateNumber: "",
       vin: "1HGCM82633A004352",
       chassisNumber: null,
       colorId: 2,
@@ -456,8 +487,7 @@ describe("Service Visit API", () => {
         model: "CB150R",
         year: 2022,
         colorName: "Black",
-        plateCode: "29",
-        plateNumber: 12345,
+        plateNumber: "29-12345",
         vin: null,
         chassisNumber: null,
         activeServiceVisitId: 7,

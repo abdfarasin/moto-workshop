@@ -537,7 +537,7 @@ fn fixture() -> Fixture {
             |r| r.get(0),
         )
         .unwrap();
-    connection.execute("INSERT INTO motorcycles (customer_id, make_id, model, chassis_number, color_id, created_at, updated_at) VALUES (?1, ?2, 'Bike', 'FRAME/PART', ?3, 1, 1)", (customer_id, make_id, color_id)).unwrap();
+    connection.execute("INSERT INTO motorcycles (customer_id, make_id, model, plate_number, chassis_number, color_id, created_at, updated_at) VALUES (?1, ?2, 'Bike', '1', 'FRAME/PART', ?3, 1, 1)", (customer_id, make_id, color_id)).unwrap();
     let motorcycle_id = connection.last_insert_rowid();
     connection.execute("INSERT INTO service_visits (motorcycle_id, owner_customer_id, status, opened_at, customer_complaint, created_at, updated_at) VALUES (?1, ?2, 'OPEN', 1, 'Repair', 1, 1)", (motorcycle_id, customer_id)).unwrap();
     let open_visit_id = connection.last_insert_rowid();

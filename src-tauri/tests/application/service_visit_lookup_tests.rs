@@ -169,8 +169,7 @@ fn motorcycle_lookup_joins_presentation_and_only_open_or_ready_active_visits_in_
             "Yamaha",
             "YBR125",
             Some(2020),
-            Some("29"),
-            Some(12345),
+            Some("29-12345"),
             Some("LOOKUP-OPEN"),
             "Red",
         ),
@@ -182,8 +181,7 @@ fn motorcycle_lookup_joins_presentation_and_only_open_or_ready_active_visits_in_
             "Honda",
             "CB150R",
             Some(2022),
-            None,
-            None,
+            Some("2"),
             Some("LOOKUP-READY"),
             "Black",
         ),
@@ -195,8 +193,7 @@ fn motorcycle_lookup_joins_presentation_and_only_open_or_ready_active_visits_in_
             "Honda",
             "CB500",
             None,
-            None,
-            None,
+            Some("3"),
             Some("LOOKUP-CLOSED"),
             "Black",
         ),
@@ -208,8 +205,7 @@ fn motorcycle_lookup_joins_presentation_and_only_open_or_ready_active_visits_in_
             "Honda",
             "Wave",
             Some(2019),
-            None,
-            None,
+            Some("4"),
             Some("LOOKUP-CANCELLED"),
             "Red",
         ),
@@ -221,8 +217,7 @@ fn motorcycle_lookup_joins_presentation_and_only_open_or_ready_active_visits_in_
             "Honda",
             "Other",
             None,
-            None,
-            None,
+            Some("5"),
             Some("LOOKUP-OTHER"),
             "Black",
         ),
@@ -234,8 +229,7 @@ fn motorcycle_lookup_joins_presentation_and_only_open_or_ready_active_visits_in_
             "Honda",
             "Archived",
             None,
-            None,
-            None,
+            Some("6"),
             Some("LOOKUP-ARCHIVED"),
             "Black",
         ),
@@ -286,8 +280,7 @@ fn motorcycle_lookup_joins_presentation_and_only_open_or_ready_active_visits_in_
     assert_eq!(open.model, "YBR125");
     assert_eq!(open.year, Some(2020));
     assert_eq!(open.color_name, "Red");
-    assert_eq!(open.plate_code.as_deref(), Some("29"));
-    assert_eq!(open.plate_number, Some(12345));
+    assert_eq!(open.plate_number.as_deref(), Some("29-12345"));
     assert_eq!(open.vin, None);
     assert_eq!(open.chassis_number.as_deref(), Some("LOOKUP-OPEN"));
     assert_eq!(open.active_service_visit_id, Some(open_visit));
@@ -348,8 +341,7 @@ struct MotorcycleValues<'value> {
     make_name: &'value str,
     model: &'value str,
     year: Option<i64>,
-    plate_code: Option<&'value str>,
-    plate_number: Option<i64>,
+    plate_number: Option<&'value str>,
     chassis_number: Option<&'value str>,
     color_name: &'value str,
 }
@@ -359,8 +351,7 @@ impl<'value> MotorcycleValues<'value> {
         make_name: &'value str,
         model: &'value str,
         year: Option<i64>,
-        plate_code: Option<&'value str>,
-        plate_number: Option<i64>,
+        plate_number: Option<&'value str>,
         chassis_number: Option<&'value str>,
         color_name: &'value str,
     ) -> Self {
@@ -368,7 +359,6 @@ impl<'value> MotorcycleValues<'value> {
             make_name,
             model,
             year,
-            plate_code,
             plate_number,
             chassis_number,
             color_name,
@@ -391,33 +381,17 @@ fn insert_motorcycle(connection: &Connection, owner_id: i64, values: MotorcycleV
             |row| row.get(0),
         )
         .unwrap();
-    let plate_code_id = values.plate_code.map(|code| {
-        connection
-            .execute(
-                "INSERT OR IGNORE INTO jordan_plate_codes (code, active) VALUES (?1, 1)",
-                [code],
-            )
-            .unwrap();
-        connection
-            .query_row(
-                "SELECT id FROM jordan_plate_codes WHERE code = ?1",
-                [code],
-                |row| row.get::<_, i64>(0),
-            )
-            .unwrap()
-    });
     connection
         .execute(
             "INSERT INTO motorcycles (
-                customer_id, make_id, model, year, plate_code_id, plate_number,
+                customer_id, make_id, model, year, plate_number,
                 chassis_number, color_id, created_at, updated_at
-             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, 1000, 1000)",
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, 1000, 1000)",
             params![
                 owner_id,
                 make_id,
                 values.model,
                 values.year,
-                plate_code_id,
                 values.plate_number,
                 values.chassis_number,
                 color_id,

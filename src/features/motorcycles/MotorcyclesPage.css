@@ -1,0 +1,7 @@
+.motorcycles-directory { display: grid; gap: 24px; }
+.motorcycles-search { display: flex; gap: 12px; padding: 18px; border-bottom: 1px solid #e2e8f0; }
+.motorcycles-search label { align-items: center; border: 1px solid #cbd5e1; border-radius: 8px; display: flex; flex: 1; gap: 10px; padding: 0 12px; }
+.motorcycles-search input { border: 0; font: inherit; min-width: 0; outline: 0; padding: 11px 0; width: 100%; }
+.motorcycles-table tbody tr { cursor: pointer; }
+.motorcycles-table tbody tr:hover { background: #f8fafc; }
+.motorcycle-secondary { color: #64748b; display: block; font-size: .82rem; margin-top: 4px; }

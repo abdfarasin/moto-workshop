@@ -45,10 +45,6 @@ const references: MotorcycleRegistrationReferenceData = {
     { id: 3, name: "Black" },
     { id: 8, name: "Red" },
   ],
-  plateCodes: [
-    { id: 4, code: "29" },
-    { id: 9, code: "30" },
-  ],
 };
 
 const createdMotorcycle: CustomerMotorcycleLookup = {
@@ -57,8 +53,7 @@ const createdMotorcycle: CustomerMotorcycleLookup = {
   model: "CB150R",
   year: 2022,
   colorName: "Black",
-  plateCode: "29",
-  plateNumber: 12345,
+  plateNumber: "29-12345",
   vin: "1HGCM82633A004352",
   chassisNumber: null,
   activeServiceVisitId: null,
@@ -92,11 +87,30 @@ function renderDialog(overrides?: {
   return { ...result, onClose, onCreated };
 }
 
-async function completeRequiredFields(user: ReturnType<typeof userEvent.setup>) {
+async function completeRequiredFields(
+  user: ReturnType<typeof userEvent.setup>,
+) {
   await screen.findByRole("option", { name: "Honda" });
-  await user.selectOptions(screen.getByLabelText("Make"), "2");
-  await user.type(screen.getByLabelText("Model"), "CB150R");
-  await user.selectOptions(screen.getByLabelText("Color"), "3");
+
+  await user.selectOptions(
+    screen.getByLabelText("Make"),
+    "2",
+  );
+
+  await user.type(
+    screen.getByLabelText("Model"),
+    "CB150R",
+  );
+
+  await user.selectOptions(
+    screen.getByLabelText("Color"),
+    "3",
+  );
+
+  await user.type(
+    screen.getByLabelText("Plate Number"),
+    "29-12345",
+  );
 }
 
 describe("NewMotorcycleDialog", () => {
@@ -139,7 +153,7 @@ describe("NewMotorcycleDialog", () => {
     expect(loadReferencesMock).toHaveBeenCalledTimes(1);
   });
 
-  it("shows loading and API-provided make, color, and plate-code options", async () => {
+  it("shows loading and API-provided make and color options", async () => {
     // Arrange
     const loading = deferred<MotorcycleRegistrationReferenceData>();
     loadReferencesMock.mockReturnValueOnce(loading.promise);
@@ -154,8 +168,6 @@ describe("NewMotorcycleDialog", () => {
     expect(screen.getByRole("option", { name: "Yamaha" })).toBeTruthy();
     expect(screen.getByRole("option", { name: "Black" })).toBeTruthy();
     expect(screen.getByRole("option", { name: "Red" })).toBeTruthy();
-    expect(screen.getByRole("option", { name: "29" })).toBeTruthy();
-    expect(screen.getByRole("option", { name: "30" })).toBeTruthy();
   });
 
   it("shows a safe reference-data failure without raw details", async () => {
@@ -174,7 +186,7 @@ describe("NewMotorcycleDialog", () => {
 
   it("shows useful empty states for missing expected catalogs", async () => {
     // Arrange
-    loadReferencesMock.mockResolvedValue({ makes: [], colors: [], plateCodes: [] });
+    loadReferencesMock.mockResolvedValue({ makes: [], colors: [] });
 
     // Act
     renderDialog();
@@ -182,12 +194,9 @@ describe("NewMotorcycleDialog", () => {
     // Assert
     expect(await screen.findByText("No motorcycle makes are available.")).toBeTruthy();
     expect(screen.getByText("No motorcycle colors are available.")).toBeTruthy();
-    expect(
-      screen.getByText("No plate codes are available; use a VIN or chassis number."),
-    ).toBeTruthy();
   });
 
-  it("requires Make, Model, and Color without copying backend identity rules", async () => {
+  it("requires Make, Model, Color, and Plate Number", async () => {
     // Arrange
     const user = userEvent.setup();
     renderDialog();
@@ -200,8 +209,53 @@ describe("NewMotorcycleDialog", () => {
     expect(screen.getByText("Make is required.")).toBeTruthy();
     expect(screen.getByText("Model is required.")).toBeTruthy();
     expect(screen.getByText("Color is required.")).toBeTruthy();
+    expect(screen.getByText("Plate number is required.")).toBeTruthy();
+    expect(screen.getByLabelText("Plate Number").getAttribute("aria-invalid")).toBe("true");
     expect(createMotorcycleMock).not.toHaveBeenCalled();
   });
+
+  it.each([
+    ["ABC123", "Plate number may contain digits and dashes only."],
+    ["12 A 34", "Plate number may contain digits and dashes only."],
+    ["-123", "Use dashes only between number groups."],
+    ["123-", "Use dashes only between number groups."],
+    ["12--34", "Use dashes only between number groups."],
+  ])("rejects malformed plate %s and highlights the field", async (plateNumber, message) => {
+    // Arrange
+    const user = userEvent.setup();
+    renderDialog();
+    await completeRequiredFields(user);
+    await user.clear(screen.getByLabelText("Plate Number"));
+    await user.type(screen.getByLabelText("Plate Number"), plateNumber);
+
+    // Act
+    await user.click(screen.getByRole("button", { name: "Create Motorcycle" }));
+
+    // Assert
+    expect(screen.getByText(message)).toBeTruthy();
+    expect(screen.getByLabelText("Plate Number").getAttribute("aria-invalid")).toBe("true");
+    expect(createMotorcycleMock).not.toHaveBeenCalled();
+  });
+
+  it.each(["4712213", "47-122132", "12-34-56"])(
+    "accepts supported plate %s",
+    async (plateNumber) => {
+      // Arrange
+      const user = userEvent.setup();
+      createMotorcycleMock.mockResolvedValue(createdMotorcycle);
+      renderDialog();
+      await completeRequiredFields(user);
+      await user.clear(screen.getByLabelText("Plate Number"));
+      await user.type(screen.getByLabelText("Plate Number"), plateNumber);
+
+      // Act
+      await user.click(screen.getByRole("button", { name: "Create Motorcycle" }));
+
+      // Assert
+      await waitFor(() => expect(createMotorcycleMock).toHaveBeenCalledTimes(1));
+      expect(createMotorcycleMock.mock.calls[0][0].plateNumber).toBe(plateNumber);
+    },
+  );
 
   it("rejects malformed Year but sends a valid whole Year as a number", async () => {
     // Arrange
@@ -244,8 +298,7 @@ describe("NewMotorcycleDialog", () => {
       makeId: 2,
       model: "CB150R",
       year: null,
-      plateCodeId: null,
-      plateNumber: null,
+      plateNumber: "29-12345",
       vin: null,
       chassisNumber: null,
       colorId: 3,
@@ -258,7 +311,6 @@ describe("NewMotorcycleDialog", () => {
         "makeId",
         "model",
         "year",
-        "plateCodeId",
         "plateNumber",
         "vin",
         "chassisNumber",
@@ -277,9 +329,9 @@ describe("NewMotorcycleDialog", () => {
     await completeRequiredFields(user);
 
     // Act
-    await user.selectOptions(screen.getByLabelText("Plate Code"), "9");
-    await user.type(screen.getByLabelText("Plate Number"), "  00042  ");
-    await user.type(screen.getByLabelText("VIN"), "  vinLower123456789  ");
+    await user.clear(screen.getByLabelText("Plate Number"));
+    await user.type(screen.getByLabelText("Plate Number"), "  29-00042  ");
+    await user.type(screen.getByLabelText("VIN"), "  1hgcm82633a004352  ");
     await user.type(screen.getByLabelText("Chassis Number"), "  frame-Abc/1  ");
     await user.type(screen.getByLabelText("Notes"), "  Customer notes  ");
     await user.click(screen.getByRole("button", { name: "Create Motorcycle" }));
@@ -290,9 +342,8 @@ describe("NewMotorcycleDialog", () => {
       customerId: 17,
       makeId: 2,
       colorId: 3,
-      plateCodeId: 9,
-      plateNumber: "00042",
-      vin: "vinLower123456789",
+      plateNumber: "29-00042",
+      vin: "1hgcm82633a004352",
       chassisNumber: "frame-Abc/1",
       notes: "Customer notes",
     });
@@ -371,7 +422,10 @@ describe("NewMotorcycleDialog", () => {
       "motorcycleIdentityAlreadyExists",
       "A motorcycle with this plate, VIN, or chassis number already exists.",
     ],
-    ["validationError", "Please review the motorcycle details and try again."],
+    [
+      "validationError",
+      "Some motorcycle details are invalid. Please review the highlighted fields.",
+    ],
     ["databaseError", "The motorcycle could not be saved. Please try again."],
   ] as const)("shows safe %s feedback", async (category, expectedMessage) => {
     // Arrange
@@ -469,7 +523,6 @@ describe("NewMotorcycleDialog", () => {
     oldLoad.resolve({
       makes: [{ id: 99, name: "Stale Make" }],
       colors: [{ id: 99, name: "Stale Color" }],
-      plateCodes: [],
     });
 
     // Assert

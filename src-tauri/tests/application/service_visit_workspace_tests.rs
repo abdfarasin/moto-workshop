@@ -61,8 +61,10 @@ fn loads_complete_workspace_with_active_and_voided_part_history() {
     assert_eq!(workspace.motorcycle.make_name, "Honda");
     assert_eq!(workspace.motorcycle.model, "CB150R");
     assert_eq!(workspace.motorcycle.year, Some(2022));
-    assert_eq!(workspace.motorcycle.plate_code.as_deref(), Some("29"));
-    assert_eq!(workspace.motorcycle.plate_number, Some(12_345));
+    assert_eq!(
+        workspace.motorcycle.plate_number.as_deref(),
+        Some("29-12345")
+    );
     assert_eq!(workspace.motorcycle.color_name, "Black");
     assert_eq!(workspace.parts.len(), 2);
     assert_eq!(workspace.parts[0].id, active_part_id);
@@ -890,18 +892,11 @@ fn fixture() -> Fixture {
         .unwrap();
     connection
         .execute(
-            "INSERT INTO jordan_plate_codes (code, active) VALUES ('29', 1)",
-            [],
-        )
-        .unwrap();
-    let plate_code_id = connection.last_insert_rowid();
-    connection
-        .execute(
             "INSERT INTO motorcycles (
-                customer_id, make_id, model, year, plate_code_id, plate_number,
+                customer_id, make_id, model, year, plate_number,
                 color_id, created_at, updated_at
-             ) VALUES (?1, ?2, 'CB150R', 2022, ?3, 12345, ?4, 1000, 1000)",
-            params![owner_id, make_id, plate_code_id, color_id],
+             ) VALUES (?1, ?2, 'CB150R', 2022, '29-12345', ?3, 1000, 1000)",
+            params![owner_id, make_id, color_id],
         )
         .unwrap();
     let motorcycle_id = connection.last_insert_rowid();

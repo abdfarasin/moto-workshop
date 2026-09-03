@@ -2,7 +2,7 @@ use std::{error::Error, fmt};
 
 use rusqlite::{Connection, OptionalExtension, Result};
 
-const MAX_SUPPORTED_SCHEMA_VERSION: i64 = 7;
+const MAX_SUPPORTED_SCHEMA_VERSION: i64 = 9;
 
 #[derive(Debug)]
 pub enum MigrationError {
@@ -90,6 +90,14 @@ pub fn migrate_database(connection: &mut Connection) -> std::result::Result<(), 
 
     if schema_version(connection)? < 7 {
         migrate_to_version_7(connection)?;
+    }
+
+    if schema_version(connection)? < 8 {
+        migrate_to_version_8(connection)?;
+    }
+
+    if schema_version(connection)? < 9 {
+        migrate_to_version_9(connection)?;
     }
 
     Ok(())
@@ -1159,4 +1167,352 @@ fn migrate_to_version_7(connection: &mut Connection) -> std::result::Result<(), 
     transaction.pragma_update(None, "user_version", 7)?;
     transaction.commit()?;
     Ok(())
+}
+
+fn migrate_to_version_8(connection: &mut Connection) -> std::result::Result<(), MigrationError> {
+    let foreign_keys_were_enabled: bool =
+        connection.pragma_query_value(None, "foreign_keys", |row| row.get(0))?;
+
+    connection.pragma_update(None, "foreign_keys", false)?;
+
+    let migration_result: std::result::Result<(), MigrationError> = (|| {
+        let transaction = connection.transaction()?;
+
+        transaction.execute_batch(
+            "
+            DROP TRIGGER validate_service_visit_owner_v5;
+            CREATE TABLE motorcycles_v8 (
+                id             INTEGER PRIMARY KEY AUTOINCREMENT,
+                customer_id    INTEGER NOT NULL,
+                make_id        INTEGER NOT NULL,
+
+                model          TEXT NOT NULL
+                               CHECK (
+                                   typeof(model) = 'text'
+                                   AND model = trim(model)
+                                   AND length(model) BETWEEN 1 AND 80
+                               ),
+
+                year           INTEGER
+                               CHECK (
+                                   year IS NULL
+                                   OR (
+                                       typeof(year) = 'integer'
+                                       AND year >= 1885
+                                   )
+                               ),
+
+                plate_number   TEXT UNIQUE,
+
+                vin            TEXT UNIQUE
+                               CHECK (
+                                   vin IS NULL
+                                   OR (
+                                       typeof(vin) = 'text'
+                                       AND length(vin) = 17
+                                       AND vin = upper(vin)
+                                       AND vin NOT GLOB '*[^A-Z0-9]*'
+                                       AND instr(vin, 'I') = 0
+                                       AND instr(vin, 'O') = 0
+                                       AND instr(vin, 'Q') = 0
+                                   )
+                               ),
+
+                chassis_number TEXT UNIQUE
+                               CHECK (
+                                   chassis_number IS NULL
+                                   OR (
+                                       typeof(chassis_number) = 'text'
+                                       AND length(chassis_number)
+                                           BETWEEN 1 AND 64
+                                       AND chassis_number =
+                                           upper(chassis_number)
+                                       AND chassis_number
+                                           NOT GLOB '*[^A-Z0-9./-]*'
+                                   )
+                               ),
+
+                color_id       INTEGER NOT NULL,
+
+                notes          TEXT
+                               CHECK (
+                                   notes IS NULL
+                                   OR (
+                                       typeof(notes) = 'text'
+                                       AND length(notes) <= 2000
+                                   )
+                               ),
+
+                created_at     INTEGER NOT NULL,
+                updated_at     INTEGER NOT NULL,
+                archived_at    INTEGER,
+
+                FOREIGN KEY (customer_id)
+                    REFERENCES customers(id)
+                    ON DELETE RESTRICT,
+
+                FOREIGN KEY (make_id)
+                    REFERENCES motorcycle_makes(id)
+                    ON DELETE RESTRICT,
+
+                FOREIGN KEY (color_id)
+                    REFERENCES motorcycle_colors(id)
+                    ON DELETE RESTRICT,
+
+                CHECK (
+                    plate_number IS NOT NULL
+                    OR vin IS NOT NULL
+                    OR chassis_number IS NOT NULL
+                )
+            );
+
+            INSERT INTO motorcycles_v8 (
+                id,
+                customer_id,
+                make_id,
+                model,
+                year,
+                plate_number,
+                vin,
+                chassis_number,
+                color_id,
+                notes,
+                created_at,
+                updated_at,
+                archived_at
+            )
+            SELECT
+                m.id,
+                m.customer_id,
+                m.make_id,
+                m.model,
+                m.year,
+                CASE
+                    WHEN m.plate_code_id IS NOT NULL
+                     AND m.plate_number IS NOT NULL
+                    THEN (
+                        SELECT p.code
+                        FROM jordan_plate_codes p
+                        WHERE p.id = m.plate_code_id
+                    ) || '-' || CAST(m.plate_number AS TEXT)
+                    ELSE NULL
+                END,
+                m.vin,
+                m.chassis_number,
+                m.color_id,
+                m.notes,
+                m.created_at,
+                m.updated_at,
+                m.archived_at
+            FROM motorcycles m;
+
+            DROP TABLE motorcycles;
+
+            ALTER TABLE motorcycles_v8
+                RENAME TO motorcycles;
+
+            CREATE INDEX idx_motorcycles_customer_id
+                ON motorcycles(customer_id);
+
+            CREATE INDEX idx_motorcycles_make_id
+                ON motorcycles(make_id);
+            CREATE TRIGGER validate_service_visit_owner_v5
+            BEFORE INSERT ON service_visits
+            WHEN NOT EXISTS (
+                SELECT 1
+                FROM motorcycles
+                WHERE id = NEW.motorcycle_id
+                AND customer_id = NEW.owner_customer_id
+            )
+            BEGIN
+                SELECT RAISE(
+                    ABORT,
+                    'service visit owner must match motorcycle owner'
+                );
+            END;
+            CREATE TRIGGER validate_motorcycle_plate_insert_v8
+            BEFORE INSERT ON motorcycles
+            WHEN
+                NEW.plate_number IS NULL
+                OR typeof(NEW.plate_number) != 'text'
+                OR NEW.plate_number != trim(NEW.plate_number)
+                OR length(NEW.plate_number) = 0
+                OR NEW.plate_number GLOB '*[^0-9-]*'
+                OR substr(NEW.plate_number, 1, 1) = '-'
+                OR substr(NEW.plate_number, -1, 1) = '-'
+                OR instr(NEW.plate_number, '--') > 0
+            BEGIN
+                SELECT RAISE(
+                    ABORT,
+                    'invalid motorcycle plate number'
+                );
+            END;
+
+            CREATE TRIGGER validate_motorcycle_plate_update_v8
+            BEFORE UPDATE OF plate_number ON motorcycles
+            WHEN
+                NEW.plate_number IS NULL
+                OR typeof(NEW.plate_number) != 'text'
+                OR NEW.plate_number != trim(NEW.plate_number)
+                OR length(NEW.plate_number) = 0
+                OR NEW.plate_number GLOB '*[^0-9-]*'
+                OR substr(NEW.plate_number, 1, 1) = '-'
+                OR substr(NEW.plate_number, -1, 1) = '-'
+                OR instr(NEW.plate_number, '--') > 0
+            BEGIN
+                SELECT RAISE(
+                    ABORT,
+                    'invalid motorcycle plate number'
+                );
+            END;
+            ",
+        )?;
+
+        let foreign_key_violation = transaction
+            .query_row(
+                "SELECT \"table\"
+                 FROM pragma_foreign_key_check
+                 LIMIT 1",
+                [],
+                |row| row.get(0),
+            )
+            .optional()?;
+
+        if let Some(table) = foreign_key_violation {
+            return Err(MigrationError::ForeignKeyIntegrityViolation { table });
+        }
+
+        transaction.pragma_update(None, "user_version", 8)?;
+
+        transaction.commit()?;
+
+        Ok(())
+    })();
+
+    let restore_foreign_keys_result =
+        connection.pragma_update(None, "foreign_keys", foreign_keys_were_enabled);
+
+    match (migration_result, restore_foreign_keys_result) {
+        (Err(error), _) => Err(error),
+
+        (Ok(()), Err(error)) => Err(MigrationError::Database(error)),
+
+        (Ok(()), Ok(())) => Ok(()),
+    }
+}
+
+fn migrate_to_version_9(connection: &mut Connection) -> Result<()> {
+    let transaction = connection.transaction()?;
+
+    transaction.execute_batch(
+        "
+        ALTER TABLE invoices ADD COLUMN customer_name TEXT;
+        ALTER TABLE invoices ADD COLUMN customer_phone TEXT;
+        ALTER TABLE invoices ADD COLUMN motorcycle_make_name TEXT;
+        ALTER TABLE invoices ADD COLUMN motorcycle_model TEXT;
+        ALTER TABLE invoices ADD COLUMN motorcycle_plate_number TEXT;
+        ALTER TABLE invoices ADD COLUMN motorcycle_vin TEXT;
+        ALTER TABLE invoices ADD COLUMN motorcycle_chassis_number TEXT;
+        ALTER TABLE invoices ADD COLUMN labor_charge_fils INTEGER;
+        ALTER TABLE invoices ADD COLUMN parts_total_fils INTEGER;
+        ALTER TABLE invoices ADD COLUMN total_fils INTEGER;
+
+        CREATE TABLE invoice_lines (
+            id                    INTEGER PRIMARY KEY AUTOINCREMENT,
+            invoice_id            INTEGER NOT NULL,
+            service_visit_part_id INTEGER NOT NULL UNIQUE,
+            item_name             TEXT NOT NULL,
+            unit_name             TEXT NOT NULL,
+            quantity              INTEGER NOT NULL,
+            quantity_scale        INTEGER NOT NULL,
+            unit_price_fils       INTEGER NOT NULL,
+            line_total_fils       INTEGER NOT NULL,
+            created_at            INTEGER NOT NULL,
+            FOREIGN KEY (invoice_id) REFERENCES invoices(id) ON DELETE RESTRICT,
+            FOREIGN KEY (service_visit_part_id)
+                REFERENCES service_visit_parts(id) ON DELETE RESTRICT,
+            CHECK (quantity > 0),
+            CHECK (quantity_scale > 0),
+            CHECK (unit_price_fils >= 0),
+            CHECK (line_total_fils >= 0)
+        );
+
+        CREATE INDEX idx_invoices_status_issued_at_v9
+            ON invoices(status, issued_at DESC, id DESC);
+        CREATE INDEX idx_invoice_lines_invoice_id_v9
+            ON invoice_lines(invoice_id, id);
+
+        CREATE TRIGGER validate_invoice_issue_v9
+        BEFORE UPDATE OF status ON invoices
+        WHEN NEW.status = 'ISSUED'
+        BEGIN
+            SELECT CASE WHEN OLD.status != 'DRAFT'
+                THEN RAISE(ABORT, 'only a draft invoice can be issued') END;
+            SELECT CASE WHEN NEW.invoice_number IS NULL
+                OR NEW.issued_at IS NULL
+                OR NEW.customer_name IS NULL
+                OR NEW.customer_phone IS NULL
+                OR NEW.motorcycle_make_name IS NULL
+                OR NEW.motorcycle_model IS NULL
+                OR NEW.labor_charge_fils IS NULL
+                OR NEW.parts_total_fils IS NULL
+                OR NEW.total_fils IS NULL
+                OR NEW.labor_charge_fils < 0
+                OR NEW.parts_total_fils < 0
+                OR NEW.total_fils != NEW.labor_charge_fils + NEW.parts_total_fils
+                OR NEW.parts_total_fils != COALESCE((
+                    SELECT SUM(line_total_fils)
+                    FROM invoice_lines
+                    WHERE invoice_id = NEW.id
+                ), 0)
+                THEN RAISE(ABORT, 'issued invoice snapshot is incomplete') END;
+        END;
+
+        CREATE TRIGGER prevent_issued_invoice_snapshot_update_v9
+        BEFORE UPDATE ON invoices
+        WHEN OLD.status IN ('ISSUED', 'CANCELLED')
+         AND (
+            OLD.invoice_number IS NOT NEW.invoice_number
+            OR OLD.issued_at IS NOT NEW.issued_at
+            OR OLD.customer_name IS NOT NEW.customer_name
+            OR OLD.customer_phone IS NOT NEW.customer_phone
+            OR OLD.motorcycle_make_name IS NOT NEW.motorcycle_make_name
+            OR OLD.motorcycle_model IS NOT NEW.motorcycle_model
+            OR OLD.motorcycle_plate_number IS NOT NEW.motorcycle_plate_number
+            OR OLD.motorcycle_vin IS NOT NEW.motorcycle_vin
+            OR OLD.motorcycle_chassis_number IS NOT NEW.motorcycle_chassis_number
+            OR OLD.labor_charge_fils IS NOT NEW.labor_charge_fils
+            OR OLD.parts_total_fils IS NOT NEW.parts_total_fils
+            OR OLD.total_fils IS NOT NEW.total_fils
+         )
+        BEGIN
+            SELECT RAISE(ABORT, 'issued invoice snapshot is immutable');
+        END;
+
+        CREATE TRIGGER validate_invoice_line_insert_v9
+        BEFORE INSERT ON invoice_lines
+        WHEN NOT EXISTS (
+            SELECT 1 FROM invoices
+            WHERE id = NEW.invoice_id AND status = 'DRAFT'
+        )
+        BEGIN
+            SELECT RAISE(ABORT, 'invoice lines can only be added to a draft');
+        END;
+
+        CREATE TRIGGER prevent_invoice_line_update_v9
+        BEFORE UPDATE ON invoice_lines
+        BEGIN
+            SELECT RAISE(ABORT, 'invoice line snapshot is immutable');
+        END;
+
+        CREATE TRIGGER prevent_invoice_line_delete_v9
+        BEFORE DELETE ON invoice_lines
+        BEGIN
+            SELECT RAISE(ABORT, 'invoice line snapshot cannot be deleted');
+        END;
+        ",
+    )?;
+
+    transaction.pragma_update(None, "user_version", 9)?;
+    transaction.commit()
 }

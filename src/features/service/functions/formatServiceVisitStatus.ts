@@ -1,7 +1,7 @@
-import type { ServiceHistoryPreview } from "../../customers/customerPreviewData";
+import type { ServiceVisitStatus } from "../api/serviceVisitApi";
 
 export function formatServiceVisitStatus(
-  status: ServiceHistoryPreview["status"],
+  status: ServiceVisitStatus,
 ): string {
   return status.replace(/_/g, " ");
 }

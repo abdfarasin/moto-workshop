@@ -19,7 +19,7 @@ use moto_workshop_lib::{
 };
 
 #[test]
-fn runtime_database_uses_stable_app_data_path_and_migrates_to_schema_seven() {
+fn runtime_database_uses_stable_app_data_path_and_migrates_to_schema_nine() {
     // # Arrange
     let temp_dir = tempdir().unwrap();
     let app_data_dir = temp_dir.path().join("nested").join("app-data");
@@ -38,7 +38,7 @@ fn runtime_database_uses_stable_app_data_path_and_migrates_to_schema_seven() {
     let version: i64 = connection
         .pragma_query_value(None, "user_version", |row| row.get(0))
         .unwrap();
-    assert_eq!(version, 7);
+    assert_eq!(version, 9);
     let part_table_exists: bool = connection
         .query_row(
             "SELECT EXISTS(
@@ -95,7 +95,7 @@ fn workspace_handler_maps_complete_camel_case_dto_and_stable_statuses() {
     assert_eq!(serialized["visit"]["customerComplaint"], "Oil leak");
     assert_eq!(serialized["visit"]["laborChargeFils"], 0);
     assert_eq!(serialized["motorcycle"]["makeName"], "Honda");
-    assert_eq!(serialized["motorcycle"]["plateCode"], "29");
+    assert_eq!(serialized["motorcycle"]["plateNumber"], "29-12345");
     assert_eq!(serialized["parts"][0]["status"], "ACTIVE");
     assert_eq!(serialized["parts"][0]["serviceVisitId"], fixture.visit_id);
     assert_eq!(serialized["parts"][0]["lineTotalFils"], 9_000);
@@ -606,18 +606,11 @@ fn fixture() -> Fixture {
         .unwrap();
     seed_connection
         .execute(
-            "INSERT INTO jordan_plate_codes (code, active) VALUES ('29', 1)",
-            [],
-        )
-        .unwrap();
-    let plate_code_id = seed_connection.last_insert_rowid();
-    seed_connection
-        .execute(
             "INSERT INTO motorcycles (
-                customer_id, make_id, model, year, plate_code_id, plate_number,
+                customer_id, make_id, model, year, plate_number,
                 color_id, created_at, updated_at
-             ) VALUES (?1, ?2, 'CB150R', 2022, ?3, 12345, ?4, 1000, 1000)",
-            params![owner_id, make_id, plate_code_id, color_id],
+             ) VALUES (?1, ?2, 'CB150R', 2022, '29-12345', ?3, 1000, 1000)",
+            params![owner_id, make_id, color_id],
         )
         .unwrap();
     let motorcycle_id = seed_connection.last_insert_rowid();
@@ -694,12 +687,19 @@ fn insert_motorcycle(connection: &Connection, owner_id: i64, chassis_number: &st
             |row| row.get(0),
         )
         .unwrap();
+    let plate_number: String = connection
+        .query_row(
+            "SELECT CAST(COUNT(*) + 1 AS TEXT) FROM motorcycles",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
     connection
         .execute(
             "INSERT INTO motorcycles (
-                customer_id, make_id, model, chassis_number, color_id, created_at, updated_at
-             ) VALUES (?1, ?2, 'CB150R', ?3, ?4, 1000, 1000)",
-            params![owner_id, make_id, chassis_number, color_id],
+                customer_id, make_id, model, plate_number, chassis_number, color_id, created_at, updated_at
+             ) VALUES (?1, ?2, 'CB150R', ?3, ?4, ?5, 1000, 1000)",
+            params![owner_id, make_id, plate_number, chassis_number, color_id],
         )
         .unwrap();
     connection.last_insert_rowid()

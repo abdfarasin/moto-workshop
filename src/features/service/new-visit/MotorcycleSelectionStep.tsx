@@ -7,6 +7,7 @@ type MotorcycleSelectionStepProps = {
   loading: boolean;
   error: string | null;
   onSelect: (motorcycle: CustomerMotorcycleLookup) => void;
+  onAddMotorcycle: () => void;
 };
 
 function motorcycleDetails(motorcycle: CustomerMotorcycleLookup): string[] {
@@ -14,8 +15,8 @@ function motorcycleDetails(motorcycle: CustomerMotorcycleLookup): string[] {
   details.push(
     [motorcycle.year?.toString(), motorcycle.colorName].filter(Boolean).join(" • "),
   );
-  if (motorcycle.plateCode !== null && motorcycle.plateNumber !== null) {
-    details.push(`Plate ${motorcycle.plateCode}-${motorcycle.plateNumber}`);
+  if (motorcycle.plateNumber !== null) {
+    details.push(`Plate ${motorcycle.plateNumber}`);
   }
   if (motorcycle.vin !== null) {
     details.push(`VIN ${motorcycle.vin}`);
@@ -32,6 +33,7 @@ export function MotorcycleSelectionStep({
   loading,
   error,
   onSelect,
+  onAddMotorcycle,
 }: MotorcycleSelectionStepProps) {
   return (
     <section className="new-visit-step" aria-labelledby="new-visit-motorcycle-heading">
@@ -47,7 +49,17 @@ export function MotorcycleSelectionStep({
         {loading ? <p className="new-visit-state">Loading motorcycles…</p> : null}
         {!loading && error ? <p className="new-visit-state new-visit-state--error">{error}</p> : null}
         {!loading && !error && motorcycles.length === 0 ? (
-          <p className="new-visit-state">This customer has no motorcycles.</p>
+          <div className="new-visit-state">
+            <p>This customer has no motorcycles.</p>
+
+            <button
+              className="secondary-button"
+              type="button"
+              onClick={onAddMotorcycle}
+            >
+              Add Motorcycle
+            </button>
+          </div>
         ) : null}
         {!loading && !error
           ? motorcycles.map((motorcycle) => {

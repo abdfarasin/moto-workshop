@@ -46,8 +46,7 @@ const motorcycles: CustomerMotorcycleLookup[] = [
     model: "CB150R",
     year: 2022,
     colorName: "Black",
-    plateCode: "29",
-    plateNumber: 12345,
+    plateNumber: "29-12345",
     vin: "JH2RC4468MK123456",
     chassisNumber: null,
     activeServiceVisitId: null,
@@ -59,7 +58,6 @@ const motorcycles: CustomerMotorcycleLookup[] = [
     model: "YBR125",
     year: null,
     colorName: "Red",
-    plateCode: null,
     plateNumber: null,
     vin: null,
     chassisNumber: "FRAME-12",
@@ -72,8 +70,7 @@ const motorcycles: CustomerMotorcycleLookup[] = [
     model: "GSX",
     year: 2020,
     colorName: "Blue",
-    plateCode: "30",
-    plateNumber: 88,
+    plateNumber: "30-88",
     vin: null,
     chassisNumber: null,
     activeServiceVisitId: 92,
@@ -107,8 +104,7 @@ const workspace: ServiceVisitWorkspace = {
     makeName: "Honda",
     model: "CB150R",
     year: 2022,
-    plateCode: "29",
-    plateNumber: 12345,
+    plateNumber: "29-12345",
     vin: "JH2RC4468MK123456",
     chassisNumber: null,
     colorName: "Black",
@@ -189,6 +185,45 @@ describe("NewServiceVisitDialog", () => {
     rerender(<NewServiceVisitDialog open={false} onClose={vi.fn()} onCreated={vi.fn()} />);
     rerender(<NewServiceVisitDialog open onClose={vi.fn()} onCreated={vi.fn()} />);
     expect(await screen.findByText("No customers found.")).toBeTruthy();
+  });
+
+  it("uses a preselected Customer without running customer search", async () => {
+    // Arrange
+    const initialCustomer = customers[0];
+
+    // Act
+    render(
+      <NewServiceVisitDialog
+        open
+        initialCustomer={initialCustomer}
+        onClose={vi.fn()}
+        onCreated={vi.fn()}
+      />,
+    );
+
+    // Assert
+    expect(await screen.findByText("Honda CB150R")).toBeTruthy();
+    expect(screen.getByText("Ahmad Ali")).toBeTruthy();
+    expect(searchCustomersMock).not.toHaveBeenCalled();
+    expect(listCustomerMotorcyclesMock).toHaveBeenCalledWith(7);
+  });
+
+  it("preselects the requested usable Motorcycle for the details-page flow", async () => {
+    // Arrange / Act
+    render(
+      <NewServiceVisitDialog
+        open
+        initialCustomer={customers[0]}
+        initialMotorcycleId={11}
+        onClose={vi.fn()}
+        onCreated={vi.fn()}
+      />,
+    );
+
+    // Assert
+    expect(await screen.findByLabelText("Customer complaint")).toBeTruthy();
+    expect(listCustomerMotorcyclesMock).toHaveBeenCalledWith(7);
+    expect((screen.getByRole("button", { name: /Honda CB150R/i }) as HTMLButtonElement).disabled).toBe(false);
   });
 
   it("searches by the entered name or phone and shows a safe failed-search state", async () => {

@@ -1,6 +1,7 @@
 mod customer_tests;
 mod inventory_property_tests;
 mod inventory_tests;
+mod invoice_tests;
 mod motorcycle_property_tests;
 mod motorcycle_tests;
 mod service_visit_part_property_tests;

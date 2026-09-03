@@ -293,12 +293,19 @@ fn insert_motorcycle(connection: &Connection, owner_id: i64, chassis_number: &st
             |row| row.get(0),
         )
         .unwrap();
+    let plate_number: String = connection
+        .query_row(
+            "SELECT CAST(COUNT(*) + 1 AS TEXT) FROM motorcycles",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
     connection
         .execute(
             "INSERT INTO motorcycles (
-                customer_id, make_id, model, chassis_number, color_id, created_at, updated_at
-             ) VALUES (?1, ?2, 'CB150R', ?3, ?4, 1000, 1000)",
-            params![owner_id, make_id, chassis_number, color_id],
+                customer_id, make_id, model, plate_number, chassis_number, color_id, created_at, updated_at
+             ) VALUES (?1, ?2, 'CB150R', ?3, ?4, ?5, 1000, 1000)",
+            params![owner_id, make_id, plate_number, chassis_number, color_id],
         )
         .unwrap();
     connection.last_insert_rowid()

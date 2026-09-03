@@ -1,5 +1,12 @@
 mod customer_creation_tests;
+mod customer_details_tests;
+mod customer_directory_tests;
+mod dashboard_tests;
+mod inventory_management_tests;
+mod invoice_tests;
+mod motorcycle_directory_tests;
 mod motorcycle_registration_reference_tests;
 mod service_visit_creation_tests;
+mod service_visit_directory_tests;
 mod service_visit_lookup_tests;
 mod service_visit_workspace_tests;

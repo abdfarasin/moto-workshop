@@ -1,4 +1,10 @@
 pub mod customer;
+pub mod customer_details;
+pub mod dashboard;
+pub mod inventory;
+pub mod invoice;
+pub mod motorcycle_directory;
 pub mod motorcycle_registration;
+pub mod service_visit_directory;
 pub mod service_visit_lookup;
 pub mod service_visit_workspace;

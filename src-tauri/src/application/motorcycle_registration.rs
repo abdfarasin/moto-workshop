@@ -7,7 +7,7 @@ use crate::{
     repositories::{
         motorcycle_registration::{
             MotorcycleColorRow, MotorcycleInsertError, MotorcycleMakeRow,
-            MotorcycleRegistrationRepository, PlateCodeRow,
+            MotorcycleRegistrationRepository,
         },
         service_visit_lookup::ServiceVisitLookupRepository,
     },
@@ -28,16 +28,9 @@ pub struct MotorcycleColorReference {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct JordanPlateCodeReference {
-    pub id: i64,
-    pub code: String,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MotorcycleRegistrationReferenceData {
     pub makes: Vec<MotorcycleMakeReference>,
     pub colors: Vec<MotorcycleColorReference>,
-    pub plate_codes: Vec<JordanPlateCodeReference>,
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -46,8 +39,7 @@ pub struct CreateMotorcycleInput {
     pub make_id: i64,
     pub model: String,
     pub year: Option<i32>,
-    pub plate_code_id: Option<i64>,
-    pub plate_number: Option<String>,
+    pub plate_number: String,
     pub vin: Option<String>,
     pub chassis_number: Option<String>,
     pub color_id: i64,
@@ -59,7 +51,6 @@ pub struct CreateMotorcycleInput {
 pub enum MotorcycleRegistrationReference {
     Make,
     Color,
-    PlateCode,
 }
 
 #[derive(Debug)]
@@ -75,14 +66,24 @@ pub enum MotorcycleRegistrationError {
 impl fmt::Display for MotorcycleRegistrationError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::InvalidTimestamp => write!(formatter, "motorcycle timestamp is invalid"),
-            Self::CustomerNotFound(id) => write!(formatter, "customer {id} was not found"),
+            Self::InvalidTimestamp => {
+                write!(formatter, "motorcycle timestamp is invalid")
+            }
+            Self::CustomerNotFound(id) => {
+                write!(formatter, "customer {id} was not found")
+            }
             Self::InvalidReference(reference) => {
                 write!(formatter, "motorcycle reference {reference:?} is invalid")
             }
-            Self::Validation(error) => write!(formatter, "invalid motorcycle: {error:?}"),
-            Self::IdentityAlreadyExists => write!(formatter, "motorcycle identity already exists"),
-            Self::Database(error) => write!(formatter, "database operation failed: {error}"),
+            Self::Validation(error) => {
+                write!(formatter, "invalid motorcycle: {error:?}")
+            }
+            Self::IdentityAlreadyExists => {
+                write!(formatter, "motorcycle identity already exists")
+            }
+            Self::Database(error) => {
+                write!(formatter, "database operation failed: {error}")
+            }
         }
     }
 }
@@ -130,6 +131,7 @@ impl<'connection> MotorcycleRegistrationService<'connection> {
         &self,
     ) -> Result<MotorcycleRegistrationReferenceData, MotorcycleRegistrationError> {
         let repository = MotorcycleRegistrationRepository::new(self.connection);
+
         Ok(MotorcycleRegistrationReferenceData {
             makes: repository
                 .list_active_makes()?
@@ -138,11 +140,6 @@ impl<'connection> MotorcycleRegistrationService<'connection> {
                 .collect(),
             colors: repository
                 .list_active_colors()?
-                .into_iter()
-                .map(Into::into)
-                .collect(),
-            plate_codes: repository
-                .list_active_plate_codes()?
                 .into_iter()
                 .map(Into::into)
                 .collect(),
@@ -156,37 +153,36 @@ impl<'connection> MotorcycleRegistrationService<'connection> {
         if input.created_at < 0 {
             return Err(MotorcycleRegistrationError::InvalidTimestamp);
         }
+
         let transaction = self.connection.transaction()?;
+
         let repository = MotorcycleRegistrationRepository::new(&transaction);
+
         if !repository.current_customer_exists(input.customer_id)? {
             return Err(MotorcycleRegistrationError::CustomerNotFound(
                 input.customer_id,
             ));
         }
+
         if !repository.active_make_exists(input.make_id)? {
             return Err(MotorcycleRegistrationError::InvalidReference(
                 MotorcycleRegistrationReference::Make,
             ));
         }
+
         if !repository.active_color_exists(input.color_id)? {
             return Err(MotorcycleRegistrationError::InvalidReference(
                 MotorcycleRegistrationReference::Color,
             ));
         }
-        if let Some(plate_code_id) = input.plate_code_id {
-            if !repository.active_plate_code_exists(plate_code_id)? {
-                return Err(MotorcycleRegistrationError::InvalidReference(
-                    MotorcycleRegistrationReference::PlateCode,
-                ));
-            }
-        }
+
         let current_year = repository.current_local_year()?;
+
         let motorcycle = NewMotorcycle::new(
             NewMotorcycleInput {
                 make_id: input.make_id,
                 model: input.model,
                 year: input.year,
-                plate_code_id: input.plate_code_id,
                 plate_number: input.plate_number,
                 vin: input.vin,
                 chassis_number: input.chassis_number,
@@ -195,12 +191,16 @@ impl<'connection> MotorcycleRegistrationService<'connection> {
             },
             current_year,
         )?;
+
         let motorcycle_id =
             repository.insert_motorcycle(&motorcycle, input.customer_id, input.created_at)?;
+
         let created = ServiceVisitLookupRepository::new(&transaction)
             .find_customer_motorcycle(input.customer_id, motorcycle_id)?
             .ok_or(rusqlite::Error::QueryReturnedNoRows)?;
+
         transaction.commit()?;
+
         Ok(created.into())
     }
 }
@@ -219,15 +219,6 @@ impl From<MotorcycleColorRow> for MotorcycleColorReference {
         Self {
             id: row.id,
             name: row.name,
-        }
-    }
-}
-
-impl From<PlateCodeRow> for JordanPlateCodeReference {
-    fn from(row: PlateCodeRow) -> Self {
-        Self {
-            id: row.id,
-            code: row.code,
         }
     }
 }

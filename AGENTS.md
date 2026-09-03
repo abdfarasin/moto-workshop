@@ -80,3 +80,14 @@ Keep these repository documents synchronized with every relevant change:
 * `SOFTWARE_ARCHITECTURE.md` describes how the frontend, Tauri shell, Rust modules, domain model, persistence layer, and tests are connected. Update it whenever modules, responsibilities, data flow, commands, or architectural boundaries change.
 
 Do not declare a change complete while either document is stale relative to the working tree. Documentation-only wording changes that do not affect schema or architecture do not require circular documentation edits.
+
+Performance/data-access rules:
+
+- Never load an entire growing business table merely to display/search a screen.
+- Customer, motorcycle, service visit, invoice, and inventory lists must use
+  targeted queries and pagination/limits where appropriate.
+- Filtering/searching growing datasets belongs in SQLite, not React.
+- Detail screens load by ID and only fetch related data required by the view.
+- Avoid N+1 queries; prefer joins or bounded batch queries.
+- Reference tables known to remain tiny may be loaded in full.
+- Do not preload data for sections the user has not opened.

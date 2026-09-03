@@ -9,13 +9,18 @@ proptest! {
     }
 
     #[test]
-    fn successful_plate_number_is_always_in_range(input in any::<String>()) {
+    fn successful_plate_number_is_always_canonical(input in any::<String>()) {
         // # Act
         let result = PlateNumber::parse(&input);
 
         // # Assert
         if let Ok(plate_number) = result {
-            prop_assert!((1..=99_999).contains(&plate_number.value()));
+            let value = plate_number.as_str();
+            prop_assert!(!value.is_empty());
+            prop_assert!(value.bytes().all(|byte| byte.is_ascii_digit() || byte == b'-'));
+            prop_assert!(!value.starts_with('-'));
+            prop_assert!(!value.ends_with('-'));
+            prop_assert!(!value.contains("--"));
         }
     }
 

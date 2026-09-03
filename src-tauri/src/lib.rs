@@ -5,10 +5,21 @@ pub mod domain;
 mod repositories;
 pub mod runtime;
 
-use commands::customer::create_customer;
+use commands::customer::{create_customer, search_customer_directory};
+use commands::customer_details::load_customer_details;
+use commands::dashboard::load_dashboard;
+use commands::inventory::{
+    adjust_inventory_stock, create_inventory_item, list_inventory_units,
+    load_inventory_item_details, search_inventory_items, update_inventory_item,
+};
+use commands::invoice::{
+    issue_invoice, list_invoices, load_invoice_details, load_service_visit_invoice,
+};
+use commands::motorcycle_directory::{load_motorcycle_details, search_motorcycle_directory};
 use commands::motorcycle_registration::{
     create_motorcycle, load_motorcycle_registration_reference_data,
 };
+use commands::service_visit_directory::list_service_visits;
 use commands::service_visit_lookup::{list_customer_motorcycles, search_customers};
 use commands::service_visit_workspace::{
     add_service_visit_part, cancel_service_visit, close_service_visit, create_service_visit,
@@ -16,6 +27,7 @@ use commands::service_visit_workspace::{
     mark_service_visit_ready_for_pickup, reopen_service_visit, update_service_visit_work,
     void_service_visit_part,
 };
+
 use runtime::database::RuntimeDatabase;
 use tauri::Manager;
 
@@ -25,12 +37,31 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .setup(|application| {
             let application_data_directory = application.path().app_data_dir()?;
+
             let database = RuntimeDatabase::initialize(application_data_directory)?;
+
             application.manage(database);
+
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
             create_customer,
+            search_customer_directory,
+            load_customer_details,
+            load_dashboard,
+            search_motorcycle_directory,
+            load_motorcycle_details,
+            search_inventory_items,
+            load_inventory_item_details,
+            list_inventory_units,
+            create_inventory_item,
+            update_inventory_item,
+            adjust_inventory_stock,
+            list_invoices,
+            load_invoice_details,
+            load_service_visit_invoice,
+            issue_invoice,
+            list_service_visits,
             create_motorcycle,
             load_motorcycle_registration_reference_data,
             search_customers,

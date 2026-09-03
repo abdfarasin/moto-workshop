@@ -753,6 +753,12 @@ input {
   margin-inline-start: 0;
 }
 
+.customer-details-action-error {
+  margin: 0 0 10px;
+  color: #b42318;
+  font-size: 12.5px;
+}
+
 .status-badge {
   display: inline-flex;
   align-items: center;

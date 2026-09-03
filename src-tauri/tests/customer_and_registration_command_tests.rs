@@ -100,20 +100,6 @@ fn registration_reference_handler_returns_exact_active_camel_case_catalogs() {
         )
         .unwrap();
     let color_id = connection.last_insert_rowid();
-    connection
-        .execute(
-            "INSERT INTO jordan_plate_codes (code, active) VALUES ('29', 1), ('Hidden', 0)",
-            [],
-        )
-        .unwrap();
-    let plate_id: i64 = connection
-        .query_row(
-            "SELECT id FROM jordan_plate_codes WHERE code = '29'",
-            [],
-            |row| row.get(0),
-        )
-        .unwrap();
-
     // # Act
     let result = handle_load_motorcycle_registration_reference_data(&fixture.database).unwrap();
 
@@ -122,8 +108,7 @@ fn registration_reference_handler_returns_exact_active_camel_case_catalogs() {
         serde_json::to_value(result).unwrap(),
         json!({
             "makes": [{ "id": make_id, "name": "Test Make" }],
-            "colors": [{ "id": color_id, "name": "Test Color" }],
-            "plateCodes": [{ "id": plate_id, "code": "29" }]
+            "colors": [{ "id": color_id, "name": "Test Color" }]
         })
     );
 }
@@ -155,20 +140,12 @@ fn create_motorcycle_handler_uses_safe_camel_case_input_and_sanitized_errors() {
             |row| row.get(0),
         )
         .unwrap();
-    connection
-        .execute(
-            "INSERT INTO jordan_plate_codes (code, active) VALUES ('29', 1)",
-            [],
-        )
-        .unwrap();
-    let plate_code_id = connection.last_insert_rowid();
     let safe = json!({
         "customerId": customer_id,
         "makeId": make_id,
         "model": "  CB150R  ",
         "year": null,
-        "plateCodeId": plate_code_id,
-        "plateNumber": "12345",
+        "plateNumber": "29-12345",
         "vin": null,
         "chassisNumber": null,
         "colorId": color_id,
@@ -180,8 +157,7 @@ fn create_motorcycle_handler_uses_safe_camel_case_input_and_sanitized_errors() {
         "makeId": make_id,
         "model": "CB150R",
         "year": null,
-        "plateCodeId": plate_code_id,
-        "plateNumber": "12345",
+        "plateNumber": "29-12345",
         "vin": null,
         "chassisNumber": null,
         "colorId": color_id,
@@ -208,7 +184,7 @@ fn create_motorcycle_handler_uses_safe_camel_case_input_and_sanitized_errors() {
         &fixture.database,
         CreateMotorcycleCommandInput {
             customer_id: 999_999,
-            plate_number: Some("12346".into()),
+            plate_number: "29-12346".into(),
             model: "Missing owner".into(),
             created_at: 2_200,
             ..serde_json::from_value::<CreateMotorcycleCommandInput>(json!({
@@ -216,8 +192,7 @@ fn create_motorcycle_handler_uses_safe_camel_case_input_and_sanitized_errors() {
                 "makeId": make_id,
                 "model": "CB150R",
                 "year": null,
-                "plateCodeId": plate_code_id,
-                "plateNumber": "12345",
+                "plateNumber": "29-12345",
                 "vin": null,
                 "chassisNumber": null,
                 "colorId": color_id,
@@ -235,8 +210,7 @@ fn create_motorcycle_handler_uses_safe_camel_case_input_and_sanitized_errors() {
             make_id: 999_999,
             model: "Invalid reference".into(),
             year: None,
-            plate_code_id: None,
-            plate_number: None,
+            plate_number: "30-12345".into(),
             vin: Some("2HGCM82633A004352".into()),
             chassis_number: None,
             color_id,
@@ -256,8 +230,7 @@ fn create_motorcycle_handler_uses_safe_camel_case_input_and_sanitized_errors() {
             "model": "CB150R",
             "year": null,
             "colorName": "Black",
-            "plateCode": "29",
-            "plateNumber": 12345,
+            "plateNumber": "29-12345",
             "vin": null,
             "chassisNumber": null,
             "activeServiceVisitId": null,

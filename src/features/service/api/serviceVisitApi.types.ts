@@ -6,6 +6,31 @@ export type ServiceVisitStatus =
 
 export type ServiceVisitPartStatus = "ACTIVE" | "VOIDED";
 
+export type ServiceVisitDirectoryStatusFilter =
+  | "ACTIVE"
+  | "ALL"
+  | ServiceVisitStatus;
+
+export interface ListServiceVisitsInput {
+  query: string;
+  statusFilter: ServiceVisitDirectoryStatusFilter;
+  limit?: number;
+}
+
+export interface ServiceVisitDirectoryEntry {
+  id: number;
+  customerName: string;
+  customerPhone: string;
+  motorcycleId: number;
+  makeName: string;
+  model: string;
+  plateNumber: string | null;
+  openedAt: number;
+  customerComplaint: string;
+  status: ServiceVisitStatus;
+  totalFils: number;
+}
+
 export type ServiceVisitCommandErrorCategory =
   | "customerNotFound"
   | "customerPhoneAlreadyExists"
@@ -55,8 +80,7 @@ export interface ServiceVisitMotorcycle {
   makeName: string;
   model: string;
   year: number | null;
-  plateCode: string | null;
-  plateNumber: number | null;
+  plateNumber: string | null;
   vin: string | null;
   chassisNumber: string | null;
   colorName: string;
@@ -133,15 +157,9 @@ export interface MotorcycleColorReference {
   name: string;
 }
 
-export interface JordanPlateCodeReference {
-  id: number;
-  code: string;
-}
-
 export interface MotorcycleRegistrationReferenceData {
   makes: MotorcycleMakeReference[];
   colors: MotorcycleColorReference[];
-  plateCodes: JordanPlateCodeReference[];
 }
 
 export interface CreateMotorcycleInput {
@@ -149,8 +167,7 @@ export interface CreateMotorcycleInput {
   makeId: number;
   model: string;
   year: number | null;
-  plateCodeId: number | null;
-  plateNumber: string | null;
+  plateNumber: string;
   vin: string | null;
   chassisNumber: string | null;
   colorId: number;
@@ -166,8 +183,7 @@ export interface CustomerMotorcycleLookup {
   model: string;
   year: number | null;
   colorName: string;
-  plateCode: string | null;
-  plateNumber: number | null;
+  plateNumber: string | null;
   vin: string | null;
   chassisNumber: string | null;
   activeServiceVisitId: number | null;

@@ -14,12 +14,14 @@ export type AppSection =
 type AppShellProps = {
   activeSection: AppSection;
   onSectionChange: (section: AppSection) => void;
+  onNewServiceVisit: () => void;
   children: ReactNode;
 };
 
 export function AppShell({
   activeSection,
   onSectionChange,
+  onNewServiceVisit,
   children,
 }: AppShellProps) {
   return (
@@ -41,8 +43,12 @@ export function AppShell({
             />
           </div>
 
-          <button className="primary-button" type="button">
-            <Plus size={18} />
+          <button
+            className="primary-button"
+            type="button"
+            onClick={onNewServiceVisit}
+          >
+          <Plus size={18} />
             New Service Visit
           </button>
         </header>

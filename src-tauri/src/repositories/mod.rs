@@ -1,5 +1,10 @@
 pub(crate) mod customer;
+pub(crate) mod customer_details;
+pub(crate) mod dashboard;
 pub(crate) mod inventory;
+pub(crate) mod invoice;
+pub(crate) mod motorcycle_directory;
 pub(crate) mod motorcycle_registration;
 pub(crate) mod service_visit;
+pub(crate) mod service_visit_directory;
 pub(crate) mod service_visit_lookup;

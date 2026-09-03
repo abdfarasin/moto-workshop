@@ -6,13 +6,13 @@ use moto_workshop_lib::domain::motorcycle::{
 const CURRENT_YEAR: i32 = 2026;
 
 #[test]
-fn plate_number_parses_valid_numeric_input() {
+fn plate_number_parses_supported_formats_and_trims_surrounding_whitespace() {
     // # Arrange
     let cases = [
-        ("1", 1),
-        ("12345", 12345),
-        ("99999", 99999),
-        ("  00042  ", 42),
+        ("123", "123"),
+        ("47-122132", "47-122132"),
+        ("12-34-56", "12-34-56"),
+        ("  00042  ", "00042"),
     ];
 
     for (input, expected) in cases {
@@ -20,7 +20,7 @@ fn plate_number_parses_valid_numeric_input() {
         let plate_number = PlateNumber::parse(input).expect("plate number should be valid");
 
         // # Assert
-        assert_eq!(plate_number.value(), expected, "input: {input:?}");
+        assert_eq!(plate_number.as_str(), expected, "input: {input:?}");
     }
 }
 
@@ -32,11 +32,11 @@ fn plate_number_rejects_invalid_input_without_panicking() {
         "   ",
         "abc",
         "12abc",
-        "123-45",
+        "12 A 34",
+        "12_34",
         "-1",
-        "0",
-        "100000",
-        "999999999999999999999999999999999999999999999999",
+        "1-",
+        "12--34",
         "١٢٣",
         "12\u{0000}3",
     ];
@@ -271,11 +271,10 @@ fn new_motorcycle_rejects_year_outside_allowed_range() {
 }
 
 #[test]
-fn new_motorcycle_accepts_plate_only_identity() {
+fn new_motorcycle_requires_and_normalizes_plate_number() {
     // # Arrange
     let mut input = valid_input();
-    input.plate_code_id = Some(7);
-    input.plate_number = Some("  00042  ".to_string());
+    input.plate_number = "  47-00042  ".to_string();
     input.vin = None;
 
     // # Act
@@ -283,28 +282,12 @@ fn new_motorcycle_accepts_plate_only_identity() {
         NewMotorcycle::new(input, CURRENT_YEAR).expect("plate-only identity should be valid");
 
     // # Assert
-    let plate = motorcycle.plate().expect("plate should be present");
-    assert_eq!(plate.code_id(), 7);
-    assert_eq!(plate.number().value(), 42);
+    assert_eq!(motorcycle.plate_number().as_str(), "47-00042");
     assert_eq!(motorcycle.vin(), None);
 }
 
 #[test]
-fn new_motorcycle_accepts_vin_only_and_combined_identity() {
-    // # Arrange
-    let mut vin_only_input = valid_input();
-    vin_only_input.plate_code_id = None;
-    vin_only_input.plate_number = None;
-    vin_only_input.vin = Some("1hgcm82633a004352".to_string());
-
-    // # Act
-    let vin_only = NewMotorcycle::new(vin_only_input, CURRENT_YEAR)
-        .expect("VIN-only identity should be valid");
-
-    // # Assert
-    assert_eq!(vin_only.plate(), None);
-    assert_eq!(vin_only.vin().map(Vin::as_str), Some("1HGCM82633A004352"));
-
+fn new_motorcycle_accepts_optional_vin_with_required_plate() {
     // # Arrange
     let mut combined_input = valid_input();
     combined_input.vin = Some("1HGCM82633A004352".to_string());
@@ -314,31 +297,12 @@ fn new_motorcycle_accepts_vin_only_and_combined_identity() {
         .expect("combined identity should be valid");
 
     // # Assert
-    assert!(combined.plate().is_some());
+    assert_eq!(combined.plate_number().as_str(), "12345");
     assert!(combined.vin().is_some());
 }
 
 #[test]
-fn new_motorcycle_accepts_chassis_only_and_all_identity_sources() {
-    // # Arrange
-    let mut chassis_only_input = valid_input();
-    chassis_only_input.plate_code_id = None;
-    chassis_only_input.plate_number = None;
-    chassis_only_input.vin = None;
-    chassis_only_input.chassis_number = Some("  frame/abc-123.4  ".to_string());
-
-    // # Act
-    let chassis_only = NewMotorcycle::new(chassis_only_input, CURRENT_YEAR)
-        .expect("chassis-only identity should be valid");
-
-    // # Assert
-    assert_eq!(chassis_only.plate(), None);
-    assert_eq!(chassis_only.vin(), None);
-    assert_eq!(
-        chassis_only.chassis_number().map(ChassisNumber::as_str),
-        Some("FRAME/ABC-123.4")
-    );
-
+fn new_motorcycle_accepts_optional_chassis_and_all_identifiers() {
     // # Arrange
     let mut all_identifiers_input = valid_input();
     all_identifiers_input.vin = Some("1HGCM82633A004352".to_string());
@@ -349,7 +313,7 @@ fn new_motorcycle_accepts_chassis_only_and_all_identity_sources() {
         .expect("all identity sources should coexist");
 
     // # Assert
-    assert!(all_identifiers.plate().is_some());
+    assert_eq!(all_identifiers.plate_number().as_str(), "12345");
     assert!(all_identifiers.vin().is_some());
     assert!(all_identifiers.chassis_number().is_some());
 }
@@ -366,19 +330,6 @@ fn new_motorcycle_normalizes_blank_chassis_to_absence() {
 
     // # Assert
     assert_eq!(motorcycle.chassis_number(), None);
-
-    // # Arrange
-    let mut missing_identity = valid_input();
-    missing_identity.plate_code_id = None;
-    missing_identity.plate_number = None;
-    missing_identity.vin = None;
-    missing_identity.chassis_number = Some("   ".to_string());
-
-    // # Act
-    let result = NewMotorcycle::new(missing_identity, CURRENT_YEAR);
-
-    // # Assert
-    assert_eq!(result, Err(MotorcycleValidationError::MissingIdentity));
 }
 
 #[test]
@@ -400,35 +351,31 @@ fn new_motorcycle_reports_invalid_chassis_number() {
 }
 
 #[test]
-fn new_motorcycle_rejects_missing_or_incomplete_identity() {
+fn new_motorcycle_rejects_invalid_required_plate_numbers() {
     // # Arrange
     let cases = [
-        (None, None, None, MotorcycleValidationError::MissingIdentity),
-        (
-            Some(1),
-            None,
-            None,
-            MotorcycleValidationError::IncompletePlate,
-        ),
-        (
-            None,
-            Some("12345"),
-            None,
-            MotorcycleValidationError::IncompletePlate,
-        ),
+        ("", PlateNumberValidationError::Blank),
+        ("   ", PlateNumberValidationError::Blank),
+        ("ABC123", PlateNumberValidationError::InvalidCharacter),
+        ("12 A 34", PlateNumberValidationError::InvalidCharacter),
+        ("12/34", PlateNumberValidationError::InvalidCharacter),
+        ("-123", PlateNumberValidationError::InvalidFormat),
+        ("123-", PlateNumberValidationError::InvalidFormat),
+        ("12--34", PlateNumberValidationError::InvalidFormat),
     ];
 
-    for (plate_code_id, plate_number, vin, expected_error) in cases {
+    for (plate_number, plate_error) in cases {
         let mut input = valid_input();
-        input.plate_code_id = plate_code_id;
-        input.plate_number = plate_number.map(str::to_owned);
-        input.vin = vin.map(str::to_owned);
+        input.plate_number = plate_number.to_string();
 
         // # Act
         let result = NewMotorcycle::new(input, CURRENT_YEAR);
 
         // # Assert
-        assert_eq!(result, Err(expected_error));
+        assert_eq!(
+            result,
+            Err(MotorcycleValidationError::InvalidPlateNumber(plate_error))
+        );
     }
 }
 
@@ -436,7 +383,7 @@ fn new_motorcycle_rejects_missing_or_incomplete_identity() {
 fn new_motorcycle_reports_invalid_plate_and_vin() {
     // # Arrange
     let mut invalid_plate = valid_input();
-    invalid_plate.plate_number = Some("abc".to_string());
+    invalid_plate.plate_number = "abc".to_string();
 
     // # Act
     let plate_result = NewMotorcycle::new(invalid_plate, CURRENT_YEAR);
@@ -445,7 +392,7 @@ fn new_motorcycle_reports_invalid_plate_and_vin() {
     assert_eq!(
         plate_result,
         Err(MotorcycleValidationError::InvalidPlateNumber(
-            PlateNumberValidationError::NonNumeric
+            PlateNumberValidationError::InvalidCharacter
         ))
     );
 
@@ -520,8 +467,7 @@ fn valid_input() -> NewMotorcycleInput {
         make_id: 1,
         model: "MT-07".to_string(),
         year: Some(2026),
-        plate_code_id: Some(1),
-        plate_number: Some("12345".to_string()),
+        plate_number: "12345".to_string(),
         vin: None,
         chassis_number: None,
         color_id: 1,

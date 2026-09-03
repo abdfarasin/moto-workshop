@@ -169,6 +169,29 @@
   overflow-x: auto;
 }
 
+.voided-part-row {
+  color: var(--text-secondary);
+  text-decoration: line-through;
+}
+
+.part-status {
+  display: inline-flex;
+  padding: 3px 7px;
+  border-radius: 999px;
+  font-size: 10px;
+  font-weight: 650;
+}
+
+.part-status--active {
+  background: #ecfdf3;
+  color: #027a48;
+}
+
+.part-status--voided {
+  background: #f2f4f7;
+  color: #667085;
+}
+
 .service-summary-column {
   min-width: 0;
 }

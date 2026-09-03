@@ -10,6 +10,7 @@ import type {
   CustomerMotorcycleLookup,
   CustomerSummary,
   InventoryItemSelection,
+  ListServiceVisitsInput,
   MarkServiceVisitReadyForPickupInput,
   MotorcycleRegistrationReferenceData,
   ReopenServiceVisitInput,
@@ -17,6 +18,7 @@ import type {
   ServiceVisitCommandErrorCategory,
   ServiceVisitCommandErrorPayload,
   ServiceVisitPart,
+  ServiceVisitDirectoryEntry,
   ServiceVisitWorkspace,
   UpdateServiceVisitWorkInput,
   VoidServiceVisitPartInput,
@@ -103,6 +105,15 @@ export function loadServiceVisitWorkspace(
   return invokeServiceVisitCommand<ServiceVisitWorkspace>(
     "load_service_visit_workspace",
     { serviceVisitId },
+  );
+}
+
+export function listServiceVisits(
+  input: ListServiceVisitsInput,
+): Promise<ServiceVisitDirectoryEntry[]> {
+  return invokeServiceVisitCommand<ServiceVisitDirectoryEntry[]>(
+    "list_service_visits",
+    { input },
   );
 }
 
@@ -232,8 +243,8 @@ export type {
   CustomerMotorcycleLookup,
   CustomerSummary,
   InventoryItemSelection,
+  ListServiceVisitsInput,
   MarkServiceVisitReadyForPickupInput,
-  JordanPlateCodeReference,
   MotorcycleColorReference,
   MotorcycleMakeReference,
   MotorcycleRegistrationReferenceData,
@@ -242,6 +253,8 @@ export type {
   ServiceVisitCommandErrorCategory,
   ServiceVisitCommandErrorPayload,
   ServiceVisitDetails,
+  ServiceVisitDirectoryEntry,
+  ServiceVisitDirectoryStatusFilter,
   ServiceVisitMotorcycle,
   ServiceVisitOwner,
   ServiceVisitPart,

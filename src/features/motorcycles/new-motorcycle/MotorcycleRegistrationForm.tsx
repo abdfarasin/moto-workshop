@@ -7,7 +7,6 @@ export type MotorcycleFormValues = {
   model: string;
   year: string;
   colorId: string;
-  plateCodeId: string;
   plateNumber: string;
   vin: string;
   chassisNumber: string;
@@ -19,6 +18,9 @@ export type MotorcycleFormErrors = {
   model: string | null;
   year: string | null;
   color: string | null;
+  plateNumber: string | null;
+  vin: string | null;
+  chassisNumber: string | null;
 };
 
 type MotorcycleRegistrationFormProps = {
@@ -148,58 +150,85 @@ export function MotorcycleRegistrationForm({
       </fieldset>
 
       <fieldset className="new-motorcycle-group">
-        <legend>Identity</legend>
-        <p className="new-motorcycle-hint">Provide a plate, VIN, or chassis number.</p>
-        <div className="new-motorcycle-grid">
-          <Field id="new-motorcycle-plate-code" label="Plate Code" optional>
-            <select
-              aria-label="Plate Code"
-              id="new-motorcycle-plate-code"
-              value={values.plateCodeId}
-              disabled={references.plateCodes.length === 0}
-              onChange={(event) => onChange("plateCodeId", event.target.value)}
-            >
-              <option value="">No plate code</option>
-              {references.plateCodes.map((plateCode) => (
-                <option key={plateCode.id} value={plateCode.id}>
-                  {plateCode.code}
-                </option>
-              ))}
-            </select>
-          </Field>
+  <legend>Identity</legend>
 
-          <Field id="new-motorcycle-plate-number" label="Plate Number" optional>
-            <input
-              aria-label="Plate Number"
-              id="new-motorcycle-plate-number"
-              type="text"
-              inputMode="numeric"
-              value={values.plateNumber}
-              onChange={(event) => onChange("plateNumber", event.target.value)}
-            />
-          </Field>
+  <p className="new-motorcycle-hint">
+    Plate number is required. VIN and chassis number are optional.
+  </p>
 
-          <Field id="new-motorcycle-vin" label="VIN" optional>
-            <input
-              aria-label="VIN"
-              id="new-motorcycle-vin"
-              type="text"
-              value={values.vin}
-              onChange={(event) => onChange("vin", event.target.value)}
-            />
-          </Field>
+  <div className="new-motorcycle-grid">
+    <Field
+      id="new-motorcycle-plate-number"
+      label="Plate Number"
+      required
+      error={errors.plateNumber}
+    >
+      <input
+        aria-label="Plate Number"
+        id="new-motorcycle-plate-number"
+        type="text"
+        inputMode="numeric"
+        placeholder="e.g. 47-122132"
+        value={values.plateNumber}
+        aria-invalid={errors.plateNumber !== null}
+        aria-describedby={
+          errors.plateNumber
+            ? "new-motorcycle-plate-number-error"
+            : undefined
+        }
+        onChange={(event) =>
+          onChange("plateNumber", event.target.value)
+        }
+      />
+    </Field>
 
-          <Field id="new-motorcycle-chassis" label="Chassis Number" optional>
-            <input
-              aria-label="Chassis Number"
-              id="new-motorcycle-chassis"
-              type="text"
-              value={values.chassisNumber}
-              onChange={(event) => onChange("chassisNumber", event.target.value)}
-            />
-          </Field>
-        </div>
-      </fieldset>
+    <Field
+      id="new-motorcycle-vin"
+      label="VIN"
+      optional
+      error={errors.vin}
+    >
+      <input
+        aria-label="VIN"
+        id="new-motorcycle-vin"
+        type="text"
+        value={values.vin}
+        aria-invalid={errors.vin !== null}
+        aria-describedby={
+          errors.vin
+            ? "new-motorcycle-vin-error"
+            : undefined
+        }
+        onChange={(event) =>
+          onChange("vin", event.target.value)
+        }
+      />
+    </Field>
+
+    <Field
+      id="new-motorcycle-chassis"
+      label="Chassis Number"
+      optional
+      error={errors.chassisNumber}
+    >
+      <input
+        aria-label="Chassis Number"
+        id="new-motorcycle-chassis"
+        type="text"
+        value={values.chassisNumber}
+        aria-invalid={errors.chassisNumber !== null}
+        aria-describedby={
+          errors.chassisNumber
+            ? "new-motorcycle-chassis-error"
+            : undefined
+        }
+        onChange={(event) =>
+          onChange("chassisNumber", event.target.value)
+        }
+      />
+    </Field>
+  </div>
+</fieldset>
 
       <fieldset className="new-motorcycle-group">
         <legend>Notes</legend>

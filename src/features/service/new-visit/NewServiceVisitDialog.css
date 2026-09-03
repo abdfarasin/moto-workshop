@@ -101,6 +101,13 @@
   margin-block-end: 3px;
   font-size: 15px;
 }
+.new-visit-step__heading-content {
+  display: flex;
+  flex: 1;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+}
 
 .new-visit-step__number,
 .new-visit-submit-row > span {

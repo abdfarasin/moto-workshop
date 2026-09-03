@@ -1,145 +1,144 @@
-import { useState } from "react";
+import { ArrowLeft, Bike, FileText, Gauge, Package, User } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
 
 import {
-  ArrowLeft,
-  Bike,
-  Gauge,
-  Package,
-  User,
-  Wrench,
-} from "lucide-react";
-
-import "./ServiceVisitPage.css";
-import { JobDetailsCard } from "./components/JobDetailsCard";
-import { LaborChargeField } from "./components/LaborChargeField";
-import { AddPartDialog } from "./components/AddPartDialog";
-import { canEditServiceVisit } from "./functions/canEditServiceVisit";
-import { calculatePartsTotal } from "./functions/calculatePartsTotal";
-import { formatServiceVisitStatus } from "./functions/formatServiceVisitStatus";
-import { canAddServiceVisitPart } from "./functions/canAddServiceVisitPart";
-
+  issueInvoice,
+  loadServiceVisitInvoice,
+  type InvoiceDetails,
+} from "../invoices/api/invoiceApi";
 import type {
-  CustomerPreview,
-  MotorcyclePreview,
-  ServiceHistoryPreview,
-} from "../customers/customerPreviewData";
-
+  ServiceVisitPart,
+  ServiceVisitWorkspace,
+} from "./api/serviceVisitApi";
+import { formatServiceVisitStatus } from "./functions/formatServiceVisitStatus";
 import "./ServiceVisitPage.css";
+
 type ServiceVisitPageProps = {
-  customer: CustomerPreview;
-  motorcycle: MotorcyclePreview;
-  visit: ServiceHistoryPreview;
+  workspace: ServiceVisitWorkspace;
   onBack: () => void;
+  onOpenInvoice?: (invoiceId: number) => void;
 };
 
-function formatMoney(fils: number) {
-  return `${(fils / 1000).toFixed(3)} JD`;
-}
+export function ServiceVisitPage({ workspace, onBack, onOpenInvoice }: ServiceVisitPageProps) {
+  const { visit, owner, motorcycle, parts } = workspace;
+  const [invoice, setInvoice] = useState<InvoiceDetails | null>(null);
+  const [invoiceError, setInvoiceError] = useState<string | null>(null);
+  const [issuing, setIssuing] = useState(false);
+  const invoiceRequest = useRef(0);
 
-export function ServiceVisitPage({
-  customer,
-  motorcycle,
-  visit,
-  onBack,
-}: ServiceVisitPageProps) {
-  const editable = canEditServiceVisit(visit);
-  const canAddPart = canAddServiceVisitPart(visit);
-  const [addPartOpen, setAddPartOpen] = useState(false);
-  const partsTotalFils = calculatePartsTotal(visit.parts);
+  useEffect(() => {
+    if (onOpenInvoice === undefined) return;
+    const request = ++invoiceRequest.current;
+    setInvoice(null);
+    setInvoiceError(null);
+    void loadServiceVisitInvoice(visit.id)
+      .then((result) => { if (request === invoiceRequest.current) setInvoice(result); })
+      .catch(() => { if (request === invoiceRequest.current) setInvoiceError("Invoice information could not be loaded."); });
+    return () => { invoiceRequest.current += 1; };
+  }, [onOpenInvoice, visit.id]);
+
+  async function createInvoice() {
+    if (issuing) return;
+    setIssuing(true);
+    setInvoiceError(null);
+    try {
+      const issued = await issueInvoice({ serviceVisitId: visit.id, issuedAt: Date.now() });
+      setInvoice(issued);
+      onOpenInvoice?.(issued.id);
+    } catch {
+      setInvoiceError("Invoice could not be issued. Confirm the Service Visit is completed.");
+    } finally {
+      setIssuing(false);
+    }
+  }
+  const activePartsTotalFils = parts
+    .filter((part) => part.status === "ACTIVE")
+    .reduce((total, part) => total + part.lineTotalFils, 0);
+  const serviceTotalFils = visit.laborChargeFils + activePartsTotalFils;
 
   return (
     <section className="service-visit-page">
-      <button
-        type="button"
-        className="back-button"
-        onClick={onBack}
-      >
+      <button type="button" className="back-button" onClick={onBack}>
         <ArrowLeft size={17} />
-        {motorcycle.make} {motorcycle.model}
+        {owner.name}
       </button>
 
       <div className="service-visit-header">
         <div>
           <div className="visit-title-row">
             <h1>Service Visit #{visit.id}</h1>
-
-            <span
-              className={`status-badge status-${visit.status.toLowerCase()}`}
-            >
+            <span className={`status-badge status-${visit.status.toLowerCase()}`}>
               {formatServiceVisitStatus(visit.status)}
             </span>
           </div>
 
           <div className="visit-context">
-            <span>
-              <Bike size={14} />
-              {motorcycle.make} {motorcycle.model}
-            </span>
-
-            <span>
-              <User size={14} />
-              {customer.name}
-            </span>
-
+            <span><Bike size={14} />{motorcycle.makeName} {motorcycle.model}</span>
+            <span><User size={14} />{owner.name}</span>
             {visit.odometerKm !== null && (
-              <span>
-                <Gauge size={14} />
-                {visit.odometerKm.toLocaleString()} km
-              </span>
+              <span><Gauge size={14} />{visit.odometerKm.toLocaleString()} km</span>
             )}
           </div>
         </div>
+        {invoice !== null && onOpenInvoice !== undefined && (
+          invoice.status === "DRAFT" ? (
+            (visit.status === "READY_FOR_PICKUP" || visit.status === "CLOSED") && (
+              <button type="button" className="primary-button" disabled={issuing} onClick={() => void createInvoice()}>
+                <FileText size={17} />{issuing ? "Creating Invoice..." : "Create Invoice"}
+              </button>
+            )
+          ) : (
+            <button type="button" className="secondary-button" onClick={() => onOpenInvoice(invoice.id)}>
+              <FileText size={17} />View Invoice
+            </button>
+          )
+        )}
       </div>
+
+      {invoiceError !== null && <p className="service-visits-action-error" role="alert">{invoiceError}</p>}
 
       <div className="service-workspace-grid">
         <div className="service-workspace-main">
-            <JobDetailsCard visit={visit} />
+          <section className="workspace-card">
+            <div className="workspace-card-header"><h2>Job Details</h2></div>
+            <ReadOnlyField label="Customer Complaint" value={visit.customerComplaint} />
+            <ReadOnlyField label="Diagnosis" value={visit.diagnosis} multiline />
+            <ReadOnlyField label="Work Performed" value={visit.workPerformed} multiline />
+            <ReadOnlyField label="Notes" value={visit.notes} multiline />
+          </section>
 
           <section className="workspace-card">
             <div className="workspace-card-header">
               <div>
                 <h2>Parts Used</h2>
-                <p>Parts and materials recorded during this visit.</p>
+                <p>Active and voided historical lines recorded for this visit.</p>
               </div>
-                    <button
-                    type="button"
-                    className="secondary-button"
-                    disabled={!canAddPart}
-                    onClick={() => setAddPartOpen(true)}
-                    >
-                <Package size={16} />
-                Add Part
-              </button>
             </div>
 
-            {visit.parts.length > 0 ? (
+            {parts.length > 0 ? (
               <div className="parts-table-wrapper">
                 <table className="data-table">
                   <thead>
                     <tr>
                       <th>Item</th>
                       <th>Quantity</th>
+                      <th>Status</th>
                       <th className="money-column">Unit Price</th>
                       <th className="money-column">Total</th>
                     </tr>
                   </thead>
-
                   <tbody>
-                    {visit.parts.map((part) => (
-                      <tr key={part.id}>
+                    {parts.map((part) => (
+                      <tr className={part.status === "VOIDED" ? "voided-part-row" : undefined} key={part.id}>
+                        <td><strong>{part.itemName}</strong></td>
+                        <td>{formatPartQuantity(part)}</td>
                         <td>
-                          <strong>{part.name}</strong>
+                          <span className={`part-status part-status--${part.status.toLowerCase()}`}>
+                            {part.status}
+                          </span>
                         </td>
-
-                        <td>{part.quantityLabel}</td>
-
-                        <td className="money-column">
-                          {formatMoney(part.unitPriceFils)}
-                        </td>
-
-                        <td className="money-column">
-                          {formatMoney(part.lineTotalFils)}
-                        </td>
+                        <td className="money-column">{formatMoney(part.unitPriceFils)}</td>
+                        <td className="money-column">{formatMoney(part.lineTotalFils)}</td>
                       </tr>
                     ))}
                   </tbody>
@@ -157,59 +156,65 @@ export function ServiceVisitPage({
 
         <aside className="service-summary-column">
           <section className="workspace-card sticky-summary">
-            <div className="workspace-card-header">
-              <h2>Visit Summary</h2>
-            </div>
-
-            <div className="summary-info-row">
-              <span>Date</span>
-              <strong>{visit.date}</strong>
-            </div>
-
-            <div className="summary-info-row">
-              <span>Mileage</span>
-              <strong>
-                {visit.odometerKm !== null
-                  ? `${visit.odometerKm.toLocaleString()} km`
-                  : "Not recorded"}
-              </strong>
-            </div>
-
-            <div className="summary-divider" />
-
-            <div className="summary-info-row">
-            <span>Labor</span>
-
-            <LaborChargeField
-                laborChargeFils={visit.laborChargeFils}
-                editable={editable}
+            <div className="workspace-card-header"><h2>Visit Summary</h2></div>
+            <SummaryRow label="Date" value={formatDate(visit.openedAt)} />
+            <SummaryRow
+              label="Mileage"
+              value={visit.odometerKm !== null
+                ? `${visit.odometerKm.toLocaleString()} km`
+                : "Not recorded"}
             />
-            </div>
-
-            <div className="summary-info-row">
-              <span>Parts</span>
-              <strong>{formatMoney(partsTotalFils)}</strong>
-            </div>
-
+            <div className="summary-divider" />
+            <SummaryRow label="Labor" value={formatMoney(visit.laborChargeFils)} />
+            <SummaryRow label="Active parts" value={formatMoney(activePartsTotalFils)} />
             <div className="summary-total-row">
-              <span>Total</span>
-              <strong>{formatMoney(visit.totalFils)}</strong>
+              <span>Service total</span>
+              <strong>{formatMoney(serviceTotalFils)}</strong>
             </div>
-
-            <button
-              type="button"
-              className="primary-button summary-button"
-            >
-              <Wrench size={17} />
-              View Invoice
-            </button>
           </section>
         </aside>
       </div>
-      <AddPartDialog
-  open={addPartOpen}
-  onClose={() => setAddPartOpen(false)}
-/>
     </section>
   );
+}
+
+function ReadOnlyField({
+  label,
+  value,
+  multiline = false,
+}: {
+  label: string;
+  value: string | null;
+  multiline?: boolean;
+}) {
+  return (
+    <div className="service-field">
+      <label>{label}</label>
+      <div className={`read-only-field${multiline ? " multiline" : ""}`}>
+        {value ?? "Not recorded"}
+      </div>
+    </div>
+  );
+}
+
+function SummaryRow({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="summary-info-row">
+      <span>{label}</span>
+      <strong>{value}</strong>
+    </div>
+  );
+}
+
+function formatPartQuantity(part: ServiceVisitPart): string {
+  const decimals = Math.log10(part.quantityScale);
+  return `${(part.quantity / part.quantityScale).toFixed(decimals)} ${part.unitName}`;
+}
+
+function formatMoney(fils: number): string {
+  return `${(fils / 1000).toFixed(3)} JD`;
+}
+
+function formatDate(timestamp: number): string {
+  return new Date(timestamp).toLocaleDateString();
 }

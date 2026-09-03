@@ -1,6 +1,6 @@
 # Database Schema
 
-This is the living reference for the latest supported SQLite schema. It reflects the current schema version 7 working tree and must be updated with every persistence change.
+This is the living reference for the latest supported SQLite schema. It reflects the current schema version 9 working tree and must be updated with every persistence change.
 
 ## Migration history
 
@@ -13,8 +13,10 @@ This is the living reference for the latest supported SQLite schema. It reflects
 | 5 | Create `service_visits`, skeletal `invoices`, lifecycle/history triggers, and automatic draft invoices. |
 | 6 | Create reusable `inventory_units`, archivable `inventory_items`, and the immutable `stock_movements` ledger. |
 | 7 | Create historical `service_visit_parts`; rebuild Stock Movements for automatic usage and reversal entries. |
+| 8 | Rebuild `motorcycles` around one textual plate number, migrate complete legacy code/number plates, and remove the plate-code relationship. |
+| 9 | Add immutable issued-Invoice identity, customer, Motorcycle, labor, Part-line, and integer-fils total snapshots. |
 
-The migration runner rejects databases whose `PRAGMA user_version` is greater than 7. Historical migrations 1–6 are immutable.
+The migration runner rejects databases whose `PRAGMA user_version` is greater than 9. Historical migrations 1–8 are immutable.
 
 ## Entity relationships
 
@@ -23,15 +25,16 @@ erDiagram
     CUSTOMERS ||--o{ MOTORCYCLES : owns
     MOTORCYCLE_MAKES ||--o{ MOTORCYCLES : classifies
     MOTORCYCLE_COLORS ||--o{ MOTORCYCLES : classifies
-    JORDAN_PLATE_CODES ||--o{ MOTORCYCLES : identifies
     MOTORCYCLES ||--o{ SERVICE_VISITS : receives
     CUSTOMERS ||--o{ SERVICE_VISITS : owner_snapshot
     SERVICE_VISITS ||--|| INVOICES : creates
+    INVOICES ||--o{ INVOICE_LINES : snapshots
     INVENTORY_UNITS ||--o{ INVENTORY_ITEMS : measures
     INVENTORY_ITEMS ||--o{ STOCK_MOVEMENTS : ledger
     SERVICE_VISITS ||--o{ SERVICE_VISIT_PARTS : uses
     INVENTORY_ITEMS ||--o{ SERVICE_VISIT_PARTS : snapshots
     SERVICE_VISIT_PARTS ||--o{ STOCK_MOVEMENTS : effects
+    SERVICE_VISIT_PARTS ||--o| INVOICE_LINES : issued_snapshot
 
     CUSTOMERS {
         INTEGER id PK
@@ -49,8 +52,7 @@ erDiagram
         INTEGER make_id FK
         TEXT model
         INTEGER year NULL
-        INTEGER plate_code_id FK_NULL
-        INTEGER plate_number NULL
+        TEXT plate_number UK_NULL
         TEXT vin UK_NULL
         TEXT chassis_number UK_NULL
         INTEGER color_id FK
@@ -69,12 +71,6 @@ erDiagram
     MOTORCYCLE_COLORS {
         INTEGER id PK
         TEXT name UK
-        INTEGER active
-    }
-
-    JORDAN_PLATE_CODES {
-        INTEGER id PK
-        TEXT code UK
         INTEGER active
     }
 
@@ -106,8 +102,31 @@ erDiagram
         INTEGER issued_at NULL
         INTEGER cancelled_at NULL
         TEXT notes NULL
+        TEXT customer_name NULL
+        TEXT customer_phone NULL
+        TEXT motorcycle_make_name NULL
+        TEXT motorcycle_model NULL
+        TEXT motorcycle_plate_number NULL
+        TEXT motorcycle_vin NULL
+        TEXT motorcycle_chassis_number NULL
+        INTEGER labor_charge_fils NULL
+        INTEGER parts_total_fils NULL
+        INTEGER total_fils NULL
         INTEGER created_at
         INTEGER updated_at
+    }
+
+    INVOICE_LINES {
+        INTEGER id PK
+        INTEGER invoice_id FK
+        INTEGER service_visit_part_id FK_UK
+        TEXT item_name
+        TEXT unit_name
+        INTEGER quantity
+        INTEGER quantity_scale
+        INTEGER unit_price_fils
+        INTEGER line_total_fils
+        INTEGER created_at
     }
 
     INVENTORY_UNITS {
@@ -195,7 +214,8 @@ Migration 3 supplies matching `BEFORE INSERT` and `BEFORE UPDATE` validation tri
 - `id INTEGER PRIMARY KEY AUTOINCREMENT`
 - `code TEXT NOT NULL COLLATE NOCASE UNIQUE`, trimmed and 1–20 characters
 - `active INTEGER NOT NULL DEFAULT 1`, restricted to `0` or `1`
-- No official Jordanian plate-code data is seeded yet.
+- No official Jordanian plate-code data is seeded.
+- Schema v8 retains this table only as an unused historical catalog. Current application, command, repository, and UI behavior does not read or write it.
 
 ## `motorcycles`
 
@@ -206,8 +226,7 @@ Migration 3 supplies matching `BEFORE INSERT` and `BEFORE UPDATE` validation tri
 | `make_id` | `INTEGER NOT NULL` | FK to `motorcycle_makes(id)`, `ON DELETE RESTRICT`. |
 | `model` | `TEXT NOT NULL` | SQLite text, trimmed, length 1–80. |
 | `year` | `INTEGER NULL` | NULL or integer at least 1885. Domain adds a current-year upper bound. |
-| `plate_code_id` | `INTEGER NULL` | FK to `jordan_plate_codes(id)`, `ON DELETE RESTRICT`. |
-| `plate_number` | `INTEGER NULL` | Integer 1–99,999. Must be present exactly when `plate_code_id` is present. |
+| `plate_number` | `TEXT NULL UNIQUE` | New inserts require a trimmed, nonempty string containing only ASCII digits and `-`; dashes may appear only between digit groups. Migrated VIN/chassis-only rows may remain NULL. No arbitrary length limit is defined. |
 | `vin` | `TEXT NULL UNIQUE` | Exactly 17 uppercase ASCII alphanumeric characters; `I`, `O`, and `Q` forbidden. |
 | `chassis_number` | `TEXT NULL UNIQUE` | Length 1–64; uppercase ASCII `A-Z`, digits, `-`, `/`, or `.` only. |
 | `color_id` | `INTEGER NOT NULL` | FK to `motorcycle_colors(id)`, `ON DELETE RESTRICT`. |
@@ -216,13 +235,15 @@ Migration 3 supplies matching `BEFORE INSERT` and `BEFORE UPDATE` validation tri
 | `updated_at` | `INTEGER NOT NULL` | Application-supplied timestamp. |
 | `archived_at` | `INTEGER NULL` | Optional archive timestamp. |
 
-Identity requires at least one of a complete plate, strict VIN, or chassis number. The database also enforces unique plate-code/number pairs.
+New Motorcycle registration requires a unique plate number; VIN and chassis number are optional. The v8 table-level identity check still permits migrated legacy rows whose plate is NULL when VIN or chassis identity exists. The `validate_motorcycle_plate_insert_v8` and `validate_motorcycle_plate_update_v8` triggers reject NULL, blank, non-text, untrimmed, non-digit/dash, leading-dash, trailing-dash, and consecutive-dash values for new writes.
+
+Migration 8 converts each complete legacy plate to `plate_code.code || '-' || old plate_number` while preserving Motorcycle IDs and dependent Service Visit foreign keys. Legacy VIN/chassis-only Motorcycles keep a NULL plate. The migration temporarily removes and then recreates `validate_service_visit_owner_v5` while replacing the table so ownership protection remains active.
 
 Indexes:
 
 - `idx_motorcycles_customer_id` on `customer_id`
 - `idx_motorcycles_make_id` on `make_id`
-- SQLite-generated unique indexes for VIN, chassis number, and plate pair
+- SQLite-generated unique indexes for plate number, VIN, and chassis number
 
 ## `service_visits`
 
@@ -264,15 +285,25 @@ OPEN -> READY_FOR_PICKUP -> CLOSED
 | --- | --- | --- |
 | `id` | `INTEGER PRIMARY KEY AUTOINCREMENT` | Internal invoice identity; not a customer-facing invoice number. |
 | `service_visit_id` | `INTEGER NOT NULL UNIQUE` | FK to `service_visits(id)`, `ON DELETE RESTRICT`; immutable. |
-| `status` | `TEXT NOT NULL DEFAULT 'DRAFT'` | Reserved values: `DRAFT`, `ISSUED`, `CANCELLED`. Workflow is not implemented yet. |
-| `invoice_number` | `TEXT NULL UNIQUE` | NULL for drafts; number format deferred. |
-| `issued_at` | `INTEGER NULL` | Reserved for later issuance workflow. |
+| `status` | `TEXT NOT NULL DEFAULT 'DRAFT'` | `DRAFT`, `ISSUED`, or reserved `CANCELLED`. Only a DRAFT can be issued. |
+| `invoice_number` | `TEXT NULL UNIQUE` | NULL for drafts; issuance sets deterministic `INV-######` from the internal ID. |
+| `issued_at` | `INTEGER NULL` | Required for issued rows and not before Service Visit completion. |
 | `cancelled_at` | `INTEGER NULL` | Reserved for later cancellation workflow. |
 | `notes` | `TEXT NULL` | Reserved skeletal invoice notes. |
+| `customer_name`, `customer_phone` | `TEXT NULL` | NULL in a draft; frozen current Customer identity at issuance. |
+| `motorcycle_make_name`, `motorcycle_model` | `TEXT NULL` | NULL in a draft; frozen current presentation at issuance. |
+| `motorcycle_plate_number`, `motorcycle_vin`, `motorcycle_chassis_number` | `TEXT NULL` | Optional frozen Motorcycle identity values. |
+| `labor_charge_fils` | `INTEGER NULL` | Frozen nonnegative Service Visit labor at issuance. |
+| `parts_total_fils` | `INTEGER NULL` | Frozen checked sum of ACTIVE issued Part line totals. |
+| `total_fils` | `INTEGER NULL` | Exact checked `labor_charge_fils + parts_total_fils`. |
 | `created_at` | `INTEGER NOT NULL` | Copied from the Service Visit creation timestamp. |
 | `updated_at` | `INTEGER NOT NULL` | Initially copied from the Service Visit creation timestamp. |
 
-An `AFTER INSERT` Service Visit trigger creates exactly one draft Invoice atomically. Uniqueness prevents a second Invoice; focused triggers prevent changing `service_visit_id` or deleting the Invoice.
+An `AFTER INSERT` Service Visit trigger creates exactly one draft Invoice atomically. A draft is a live projection of current persisted Customer, Motorcycle, labor, and ACTIVE Parts. Issuance is a single immediate transaction: Rust validates the lifecycle and checked totals, copies ACTIVE Part snapshots into `invoice_lines`, and freezes Invoice identity and totals. VOIDED Parts are excluded. Database triggers reject incomplete totals, snapshot mutation, line mutation/deletion, Invoice deletion, and changed Service Visit identity.
+
+## `invoice_lines`
+
+Each row is an immutable issuance-time copy of one ACTIVE `service_visit_parts` row. `service_visit_part_id` is unique, all quantities/prices/totals are integer snapshots, and the line is inserted only while its Invoice is still DRAFT. The Invoice can move to ISSUED only when `parts_total_fils` exactly equals the sum of its line snapshots. Issued history therefore does not change when later catalog, Customer, Motorcycle, or Service Visit data changes.
 
 ## Inventory quantity and price representation
 
@@ -361,4 +392,4 @@ Indexes support Service Visit parts display, Inventory Item usage history, and I
 
 ## Deferred schema
 
-Invoice totals/finalization, issuance/numbering, cancellation workflow, payments, discounts, taxes, suppliers, purchasing workflows, stock valuation, and reporting remain deferred. They must be added through later migrations rather than editing versions 1–7.
+Invoice cancellation actions, payments/settlement, discounts, taxes, printing/export, suppliers, purchasing workflows, stock valuation, and reporting remain deferred. No payment model exists in schema v9. They must be added through later migrations rather than editing versions 1–9.

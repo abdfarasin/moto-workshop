@@ -53,8 +53,7 @@ fn lookup_handlers_return_exact_camel_case_dtos_and_active_status() {
             "model": "CB150R",
             "year": 2022,
             "colorName": "Black",
-            "plateCode": "29",
-            "plateNumber": 12345,
+            "plateNumber": "29-12345",
             "vin": null,
             "chassisNumber": null,
             "activeServiceVisitId": fixture.visit_id,
@@ -129,18 +128,11 @@ fn fixture() -> Fixture {
         .unwrap();
     seed_connection
         .execute(
-            "INSERT INTO jordan_plate_codes (code, active) VALUES ('29', 1)",
-            [],
-        )
-        .unwrap();
-    let plate_code_id = seed_connection.last_insert_rowid();
-    seed_connection
-        .execute(
             "INSERT INTO motorcycles (
-                customer_id, make_id, model, year, plate_code_id, plate_number,
+                customer_id, make_id, model, year, plate_number,
                 color_id, created_at, updated_at
-             ) VALUES (?1, ?2, 'CB150R', 2022, ?3, 12345, ?4, 1000, 1000)",
-            params![customer_id, make_id, plate_code_id, color_id],
+             ) VALUES (?1, ?2, 'CB150R', 2022, '29-12345', ?3, 1000, 1000)",
+            params![customer_id, make_id, color_id],
         )
         .unwrap();
     let motorcycle_id = seed_connection.last_insert_rowid();

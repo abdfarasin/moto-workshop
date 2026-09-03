@@ -41,8 +41,7 @@ pub(crate) struct MotorcycleRow {
     pub make_name: String,
     pub model: String,
     pub year: Option<i64>,
-    pub plate_code: Option<String>,
-    pub plate_number: Option<i64>,
+    pub plate_number: Option<String>,
     pub vin: Option<String>,
     pub chassis_number: Option<String>,
     pub color_name: String,
@@ -170,14 +169,13 @@ impl<'connection> ServiceVisitRepository<'connection> {
                     v.work_performed, v.labor_charge_fils,
                     v.cancellation_reason, v.notes, v.created_at, v.updated_at,
                     c.id, c.name, c.phone,
-                    m.id, mk.name, m.model, m.year, p.code, m.plate_number,
+                    m.id, mk.name, m.model, m.year, m.plate_number,
                     m.vin, m.chassis_number, mc.name
                  FROM service_visits v
                  JOIN customers c ON c.id = v.owner_customer_id
                  JOIN motorcycles m ON m.id = v.motorcycle_id
                  JOIN motorcycle_makes mk ON mk.id = m.make_id
                  JOIN motorcycle_colors mc ON mc.id = m.color_id
-                 LEFT JOIN jordan_plate_codes p ON p.id = m.plate_code_id
                  WHERE v.id = ?1",
                 [service_visit_id],
                 |row| {
@@ -211,11 +209,10 @@ impl<'connection> ServiceVisitRepository<'connection> {
                             make_name: row.get(21)?,
                             model: row.get(22)?,
                             year: row.get(23)?,
-                            plate_code: row.get(24)?,
-                            plate_number: row.get(25)?,
-                            vin: row.get(26)?,
-                            chassis_number: row.get(27)?,
-                            color_name: row.get(28)?,
+                            plate_number: row.get(24)?,
+                            vin: row.get(25)?,
+                            chassis_number: row.get(26)?,
+                            color_name: row.get(27)?,
                         },
                     })
                 },
